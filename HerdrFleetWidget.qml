@@ -626,8 +626,9 @@ PluginComponent {
                     }
                 }
 
-                // ── Machine Filter Chips ──
+                // ── Machine Filter Chips (shown when multiple machines/backends exist) ──
                 DFlickable {
+                    visible: root.machines.length > 1
                     width: parent.width
                     height: chipsRow.implicitHeight + Theme.spacingXXS * 2
                     contentWidth: chipsRow.implicitWidth
@@ -748,8 +749,9 @@ PluginComponent {
                                 spacing: Theme.spacingXS
                                 visible: (modelData.workspaces && modelData.workspaces.length > 0) || !modelData.reachable
 
-                                // Machine Header
+                                // Machine Header (shown when multiple machines exist or when local is unreachable)
                                 StyledRect {
+                                    visible: root.machines.length > 1 || !machineBlock.modelData.reachable
                                     width: parent.width
                                     height: machineHeaderRow.implicitHeight + Theme.spacingS
                                     radius: Theme.cornerRadius
