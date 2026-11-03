@@ -1,0 +1,35 @@
+{
+  "$schema": "https://github.com/AvengeMedia/DankMaterialShell/raw/refs/heads/master/PLUGINS/plugin-schema.json",
+  "id": "duxHerdrFleet",
+  "name": "Dux Herdr Fleet",
+  "description": "Multi-machine and workspace agent monitor for herdr and Herdr Desktop App (hc) with live status, context tokens, machine filter and one-click pane focus",
+  "version": "1.0.0",
+  "author": "arqueon",
+  "repo": "https://github.com/arqueon/dux-herdr-fleet",
+  "icon": "smart_toy",
+  "type": "widget",
+  "category": "monitoring",
+  "capabilities": [
+    "dankbar-widget",
+    "monitoring",
+    "ipc"
+  ],
+  "component": "./HerdrFleetWidget.qml",
+  "settings": "./HerdrFleetSettings.qml",
+  "permissions": [
+    "process",
+    "settings_read",
+    "settings_write"
+  ],
+  "dependencies": [
+    "herdr",
+    "python3"
+  ],
+  "compositors": [
+    "any"
+  ],
+  "distro": [
+    "any"
+  ],
+  "requires_dms": ">=1.5.0"
+}
