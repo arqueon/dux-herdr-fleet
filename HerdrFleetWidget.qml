@@ -13,7 +13,7 @@ PluginComponent {
     property var popoutService: null
 
     readonly property bool includeRemoteMachines: pluginData.includeRemoteMachines ?? true
-    readonly property bool includeHerdrCore: pluginData.includeHerdrCore ?? false
+    readonly property bool includeHerdrCore: pluginData.includeHerdrCore ?? true
     readonly property bool includeEmptySpaces: pluginData.includeEmptySpaces ?? false
     readonly property string pillDisplayMode: pluginData.pillDisplayMode || "breakdown"
     readonly property int baseIntervalMs: Math.max(10, (pluginData.refreshInterval || 15)) * 1000
@@ -66,6 +66,7 @@ PluginComponent {
     property bool fleetOpenRequested: false
     property real fleetOpenRequestedAt: 0
     property bool lastPollIncludedRemote: false
+    property bool pendingRemoteRefresh: false
 
     Component.onCompleted: Local.HerdrFleetController.registerRoot(root)
     Component.onDestruction: Local.HerdrFleetController.unregisterRoot(root)
@@ -168,23 +169,36 @@ PluginComponent {
             return freshPayload;
         var prevMachines = (sharedFleet.value && sharedFleet.value.machines) || [];
         var remoteCached = [];
+        var hcRemoteById = {};
         for (var i = 0; i < prevMachines.length; i++) {
             var pm = prevMachines[i];
-            if (pm && !pm.isLocal && pm.backend === "herdr")
+            if (!pm || pm.isLocal)
+                continue;
+            if (pm.backend === "herdr")
                 remoteCached.push(pm);
+            else if (pm.backend === "hc")
+                hcRemoteById[pm.id] = pm;
         }
-        if (remoteCached.length === 0)
+        if (remoteCached.length === 0 && Object.keys(hcRemoteById).length === 0)
             return freshPayload;
 
         var localList = (freshPayload.machines || []).slice();
         var mergedMachines = [];
         var insertedRemote = false;
         for (var j = 0; j < localList.length; j++) {
-            if (localList[j].backend === "hc" && !insertedRemote) {
+            var item = localList[j];
+            if (item.backend === "hc" && !insertedRemote) {
                 mergedMachines = mergedMachines.concat(remoteCached);
                 insertedRemote = true;
             }
-            mergedMachines.push(localList[j]);
+            if (item.backend === "hc" && !item.isLocal && hcRemoteById[item.id]) {
+                var cachedHc = hcRemoteById[item.id];
+                var freshWsLen = (item.workspaces && item.workspaces.length) || 0;
+                var cachedWsLen = (cachedHc.workspaces && cachedHc.workspaces.length) || 0;
+                if (freshWsLen === 0 && (cachedWsLen > 0 || !cachedHc.reachable))
+                    item = cachedHc;
+            }
+            mergedMachines.push(item);
         }
         if (!insertedRemote)
             mergedMachines = mergedMachines.concat(remoteCached);
@@ -253,14 +267,23 @@ PluginComponent {
             if (code !== 0) {
                 sharedFailures.set(Math.min(sharedFailures.value + 1, root.maxBackoffSteps));
             }
+            if (root.pendingRemoteRefresh) {
+                root.pendingRemoteRefresh = false;
+                Qt.callLater(() => root.runCollector(true));
+            }
         }
     }
 
-    // Remote SSH snapshots are queried only while the popout is open or on explicit manual refresh,
-    // avoiding periodic background SSH fanout while keeping the local bar pill live.
+    // Remote SSH snapshots are queried on initial load, while the popout is open, or on manual refresh,
+    // avoiding periodic background SSH fanout while keeping the local bar pill and hc spaces live.
     function runCollector(pollRemote) {
-        if (!root.pluginId || collectorProc.running || !root.pluginDir)
+        if (!root.pluginId || !root.pluginDir)
             return;
+        if (collectorProc.running) {
+            if (pollRemote)
+                root.pendingRemoteRefresh = true;
+            return;
+        }
         var queryRemote = (pollRemote === undefined ? root.isPopoutOpen() : pollRemote) && root.includeRemoteMachines;
         root.lastPollIncludedRemote = queryRemote;
         sharedRefreshing.set(true);
@@ -278,10 +301,11 @@ PluginComponent {
         if (!root.pluginId)
             return;
         var now = Date.now();
-        if (now - sharedLastPoll.value < root.currentIntervalMs - 500)
+        var isInitialScan = (sharedLastPoll.value === 0);
+        if (!isInitialScan && now - sharedLastPoll.value < root.currentIntervalMs - 500)
             return;
         sharedLastPoll.set(now);
-        root.runCollector(root.isPopoutOpen());
+        root.runCollector(isInitialScan || root.isPopoutOpen());
     }
 
     function refreshNow() {
@@ -626,92 +650,78 @@ PluginComponent {
                     }
                 }
 
-                // ── Machine Filter Chips (shown when multiple machines/backends exist) ──
-                DFlickable {
+                // ── Machine Filter Chips (multi-row Flow so all machines & hc hosts are visible) ──
+                Flow {
+                    id: chipsFlow
                     visible: root.machines.length > 1
                     width: parent.width
-                    height: chipsRow.implicitHeight + Theme.spacingXXS * 2
-                    contentWidth: chipsRow.implicitWidth
-                    contentHeight: height
-                    flickableDirection: Flickable.HorizontalFlick
-                    showScrollBar: false
-                    fadeEdges: false
-                    clip: true
-                    boundsBehavior: Flickable.StopAtBounds
+                    spacing: Theme.spacingXS
 
-                    Row {
-                        id: chipsRow
-                        spacing: Theme.spacingXS
-                        height: parent.height
+                    // "All" chip
+                    StyledRect {
+                        height: allChipText.implicitHeight + Theme.spacingXS * 2
+                        width: allChipText.implicitWidth + Theme.spacingM * 2
+                        radius: Theme.cornerRadiusFull
+                        color: root.selectedMachine === "all" ? Theme.primary : Theme.surfaceContainer
 
-                        // "All" chip
-                        StyledRect {
-                            height: allChipText.implicitHeight + Theme.spacingXS * 2
-                            width: allChipText.implicitWidth + Theme.spacingM * 2
+                        StyledText {
+                            id: allChipText
+                            anchors.centerIn: parent
+                            text: I18n.trFor("duxHerdrFleet", "All (%1)").arg(root.totals.agents || 0)
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.weight: root.selectedMachine === "all" ? Font.Medium : Font.Normal
+                            color: root.selectedMachine === "all" ? Theme.onPrimary : Theme.surfaceText
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: sharedSelectedMachine.set("all")
+                        }
+                    }
+
+                    Repeater {
+                        model: root.machines
+
+                        delegate: StyledRect {
+                            readonly property bool isSelected: root.selectedMachine === modelData.id
+                            readonly property int mBlocked: (modelData.counts && modelData.counts.blocked) || 0
+                            readonly property int mWorking: (modelData.counts && modelData.counts.working) || 0
+                            readonly property int mTotal: (modelData.counts && modelData.counts.total) || 0
+
+                            height: mChipRow.implicitHeight + Theme.spacingXS * 2
+                            width: mChipRow.implicitWidth + Theme.spacingM * 2
                             radius: Theme.cornerRadiusFull
-                            anchors.verticalCenter: parent.verticalCenter
-                            color: root.selectedMachine === "all" ? Theme.primary : Theme.surfaceContainer
+                            color: isSelected ? Theme.primary : Theme.surfaceContainer
+                            opacity: modelData.reachable ? 1.0 : 0.55
 
-                            StyledText {
-                                id: allChipText
+                            Row {
+                                id: mChipRow
                                 anchors.centerIn: parent
-                                text: I18n.trFor("duxHerdrFleet", "All (%1)").arg(root.totals.agents || 0)
-                                font.pixelSize: Theme.fontSizeSmall
-                                font.weight: root.selectedMachine === "all" ? Font.Medium : Font.Normal
-                                color: root.selectedMachine === "all" ? Theme.onPrimary : Theme.surfaceText
+                                spacing: Theme.spacingXS
+
+                                Rectangle {
+                                    width: Theme.spacingS
+                                    height: Theme.spacingS
+                                    radius: Theme.cornerRadiusFull
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    visible: !modelData.reachable || mBlocked > 0 || mWorking > 0
+                                    color: !modelData.reachable ? Theme.outline : (mBlocked > 0 ? Theme.error : Theme.primary)
+                                }
+
+                                StyledText {
+                                    text: (modelData.short_label || modelData.id) + " (" + mTotal + ")"
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.weight: isSelected ? Font.Medium : Font.Normal
+                                    color: isSelected ? Theme.onPrimary : Theme.surfaceText
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
                             }
 
                             MouseArea {
                                 anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: sharedSelectedMachine.set("all")
-                            }
-                        }
-
-                        Repeater {
-                            model: root.machines
-
-                            delegate: StyledRect {
-                                readonly property bool isSelected: root.selectedMachine === modelData.id
-                                readonly property int mBlocked: (modelData.counts && modelData.counts.blocked) || 0
-                                readonly property int mWorking: (modelData.counts && modelData.counts.working) || 0
-                                readonly property int mTotal: (modelData.counts && modelData.counts.total) || 0
-
-                                height: mChipRow.implicitHeight + Theme.spacingXS * 2
-                                width: mChipRow.implicitWidth + Theme.spacingM * 2
-                                radius: Theme.cornerRadiusFull
-                                anchors.verticalCenter: parent.verticalCenter
-                                color: isSelected ? Theme.primary : Theme.surfaceContainer
-                                opacity: modelData.reachable ? 1.0 : 0.55
-
-                                Row {
-                                    id: mChipRow
-                                    anchors.centerIn: parent
-                                    spacing: Theme.spacingXS
-
-                                    Rectangle {
-                                        width: Theme.spacingS
-                                        height: Theme.spacingS
-                                        radius: Theme.cornerRadiusFull
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        visible: !modelData.reachable || mBlocked > 0 || mWorking > 0
-                                        color: !modelData.reachable ? Theme.outline : (mBlocked > 0 ? Theme.error : Theme.primary)
-                                    }
-
-                                    StyledText {
-                                        text: (modelData.short_label || modelData.id) + " (" + mTotal + ")"
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        font.weight: isSelected ? Font.Medium : Font.Normal
-                                        color: isSelected ? Theme.onPrimary : Theme.surfaceText
-                                        anchors.verticalCenter: parent.verticalCenter
-                                    }
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: sharedSelectedMachine.set(isSelected ? "all" : modelData.id)
-                                }
+                                onClicked: sharedSelectedMachine.set(isSelected ? "all" : modelData.id)
                             }
                         }
                     }
@@ -747,7 +757,7 @@ PluginComponent {
                                 required property var modelData
                                 width: treeColumn.width
                                 spacing: Theme.spacingXS
-                                visible: (modelData.workspaces && modelData.workspaces.length > 0) || !modelData.reachable
+                                visible: (modelData.workspaces && modelData.workspaces.length > 0) || !modelData.reachable || root.selectedMachine === modelData.id
 
                                 // Machine Header (shown when multiple machines exist or when local is unreachable)
                                 StyledRect {
@@ -789,6 +799,13 @@ PluginComponent {
                                             anchors.verticalCenter: parent.verticalCenter
                                         }
                                     }
+                                }
+
+                                StyledText {
+                                    visible: machineBlock.modelData.reachable && (!machineBlock.modelData.workspaces || machineBlock.modelData.workspaces.length === 0) && root.selectedMachine === machineBlock.modelData.id
+                                    text: I18n.trFor("duxHerdrFleet", "No active agents on this machine")
+                                    color: Theme.surfaceVariantText
+                                    font.pixelSize: Theme.fontSizeSmall
                                 }
 
                                 // Workspaces inside this Machine
