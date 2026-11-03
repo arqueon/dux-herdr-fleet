@@ -8,14 +8,17 @@ Multi-machine & workspace agent monitor for [DankMaterialShell](https://danklinu
 
 ## Features
 
-- **Multi-Machine & Space Tree**: Automatically discovers your local `herdr` instance and all enabled SSH machines from `herdr machine list`, fetching `herdr [--machine <host>] api snapshot` in parallel via `collect-fleet`.
-- **Herdr Desktop App (`hc`) Toggle**: Built-in setting and one-click `hc` chip in the popout header to toggle monitoring of `herdr-core` (`hc ls --json`) terminals from the graphical Herdr app.
+- **Multi-Machine & Space Tree**: Automatically discovers your local `herdr` instance and all enabled SSH machines from `herdr machine list`, fetching `herdr [--machine <host>] api snapshot` in parallel via `collect-fleet` and deduplicating canonical machine, workspace, and pane entries. Background polling checks local state every 15s (min 10s), while remote SSH machines are polled when the popout is open or on explicit refresh.
+- **Herdr Desktop App (`hc`) Toggle**: Built-in setting and one-click `hc` chip in the popout header to toggle monitoring of optional `herdr-core` (`hc ls --json`) terminals from the graphical Herdr app.
 - **Rich Agent Cards**: Displays agent provider (`claude`, `codex`, `agy`, `hermes`, etc.), pane ID, stripped terminal title / custom pane label, working directory, context token usage (`⛁ 68% (325k)`), rate-limit status (`5h 100%`), and live state (`blocked`, `working`, `idle`, `done`).
 - **Machine Filter Chips**: Filter the popout tree by machine (`All`, `local`, `workstation`, `homelab`, `hc`) with status indicator dots.
 - **One-Click Focus + Niri Integration**:
-  - Click an **agent card** to focus its pane (`herdr [--machine <host>] agent focus <pane_id>` or `herdr-app do agent.focus --terminal <addr>`) and focus the `herdr` terminal window in Niri.
+  - Click an **agent card** to focus its pane (`herdr [--machine <host>] agent focus <pane_id>` or `herdr-app do agent.focus --terminal <addr>`) and focus the `herdr` terminal window (compositor window focus is Niri-only).
   - Click a **space header** to focus that workspace (`herdr [--machine <host>] workspace focus <ws_id>`).
-  - Middle-click the bar pill to jump directly to the `herdr` window; right-click to refresh immediately.
+  - Middle-click the bar pill to jump directly to the `herdr` window (Niri-only); right-click to refresh immediately.
+- **Dependencies**:
+  - Required: `herdr`, `python3`, `jq`
+  - Optional: `hc` and `herdr-app` (Herdr Desktop App integration), `niri` (compositor window focus)
 - **IPC Commands**:
   ```bash
   dms ipc call duxHerdrFleet toggle

@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Common
 import qs.Widgets
+import qs.DCommon.Widgets
 import qs.Services
 import qs.Modules.Plugins
 import "." as Local
@@ -15,11 +16,11 @@ PluginComponent {
     readonly property bool includeHerdrCore: pluginData.includeHerdrCore ?? true
     readonly property bool includeEmptySpaces: pluginData.includeEmptySpaces ?? false
     readonly property string pillDisplayMode: pluginData.pillDisplayMode || "breakdown"
-    readonly property int baseIntervalMs: Math.max(3, (pluginData.refreshInterval || 8)) * 1000
-    readonly property int maxIntervalMs: 60000
+    readonly property int baseIntervalMs: Math.max(10, (pluginData.refreshInterval || 15)) * 1000
+    readonly property int maxIntervalMs: 120000
     readonly property int maxBackoffSteps: 3
 
-    readonly property string pluginDir: PluginService.pluginDirectory + "/duxHerdrFleet"
+    readonly property string pluginDir: PluginService.getPluginPath("duxHerdrFleet")
     readonly property string collectorScript: pluginDir + "/collect-fleet"
     readonly property string focusScript: pluginDir + "/focus-target"
 
@@ -64,6 +65,7 @@ PluginComponent {
     property var fleetPopout: null
     property bool fleetOpenRequested: false
     property real fleetOpenRequestedAt: 0
+    property bool lastPollIncludedRemote: false
 
     Component.onCompleted: Local.HerdrFleetController.registerRoot(root)
     Component.onDestruction: Local.HerdrFleetController.unregisterRoot(root)
@@ -151,6 +153,69 @@ PluginComponent {
         return filtered.length > 0 ? filtered : list;
     }
 
+    function mergeCachedRemoteMachines(freshPayload) {
+        if (!freshPayload || root.lastPollIncludedRemote || !root.includeRemoteMachines)
+            return freshPayload;
+        var prevMachines = (sharedFleet.value && sharedFleet.value.machines) || [];
+        var remoteCached = [];
+        for (var i = 0; i < prevMachines.length; i++) {
+            var pm = prevMachines[i];
+            if (pm && !pm.isLocal && pm.backend === "herdr")
+                remoteCached.push(pm);
+        }
+        if (remoteCached.length === 0)
+            return freshPayload;
+
+        var localList = (freshPayload.machines || []).slice();
+        var mergedMachines = [];
+        var insertedRemote = false;
+        for (var j = 0; j < localList.length; j++) {
+            if (localList[j].backend === "hc" && !insertedRemote) {
+                mergedMachines = mergedMachines.concat(remoteCached);
+                insertedRemote = true;
+            }
+            mergedMachines.push(localList[j]);
+        }
+        if (!insertedRemote)
+            mergedMachines = mergedMachines.concat(remoteCached);
+
+        var totals = {
+            machines_total: mergedMachines.length,
+            machines_reachable: 0,
+            workspaces: 0,
+            agents: 0,
+            blocked: 0,
+            working: 0,
+            idle: 0,
+            done: 0
+        };
+        var flatAgents = [];
+        for (var k = 0; k < mergedMachines.length; k++) {
+            var m = mergedMachines[k];
+            if (m.reachable)
+                totals.machines_reachable += 1;
+            var wsList = m.workspaces || [];
+            totals.workspaces += wsList.length;
+            var c = m.counts || {};
+            totals.agents += c.total || 0;
+            totals.blocked += c.blocked || 0;
+            totals.working += c.working || 0;
+            totals.idle += c.idle || 0;
+            totals.done += c.done || 0;
+            for (var w = 0; w < wsList.length; w++) {
+                var agList = wsList[w].agents || [];
+                for (var a = 0; a < agList.length; a++)
+                    flatAgents.push(agList[a]);
+            }
+        }
+        return {
+            ok: totals.machines_reachable > 0,
+            totals: totals,
+            machines: mergedMachines,
+            agents: flatAgents
+        };
+    }
+
     Process {
         id: collectorProc
         running: false
@@ -165,7 +230,7 @@ PluginComponent {
                 }
                 try {
                     var parsed = JSON.parse(raw);
-                    sharedFleet.set(parsed);
+                    sharedFleet.set(root.mergeCachedRemoteMachines(parsed));
                     sharedFailures.set(0);
                 } catch (e) {
                     sharedFailures.set(Math.min(sharedFailures.value + 1, root.maxBackoffSteps));
@@ -181,35 +246,43 @@ PluginComponent {
         }
     }
 
-    function runCollector() {
-        if (collectorProc.running)
+    // Remote SSH snapshots are queried only while the popout is open or on explicit manual refresh,
+    // avoiding periodic background SSH fanout while keeping the local bar pill live.
+    function runCollector(pollRemote) {
+        if (!root.pluginId || collectorProc.running || !root.pluginDir)
             return;
+        var queryRemote = (pollRemote === undefined ? root.isPopoutOpen() : pollRemote) && root.includeRemoteMachines;
+        root.lastPollIncludedRemote = queryRemote;
         sharedRefreshing.set(true);
         collectorProc.command = [
             "python3",
             root.collectorScript,
             "--include-hc", root.includeHerdrCore ? "1" : "0",
-            "--include-remote", root.includeRemoteMachines ? "1" : "0",
+            "--include-remote", queryRemote ? "1" : "0",
             "--include-empty-spaces", root.includeEmptySpaces ? "1" : "0"
         ];
         collectorProc.running = true;
     }
 
     function maybeRefresh() {
+        if (!root.pluginId)
+            return;
         var now = Date.now();
         if (now - sharedLastPoll.value < root.currentIntervalMs - 500)
             return;
         sharedLastPoll.set(now);
-        root.runCollector();
+        root.runCollector(root.isPopoutOpen());
     }
 
     function refreshNow() {
+        if (!root.pluginId)
+            return;
         sharedLastPoll.set(Date.now());
-        root.runCollector();
+        root.runCollector(true);
     }
 
     function focusAgent(agent) {
-        if (!agent)
+        if (!agent || !root.pluginDir)
             return;
         Quickshell.execDetached([
             "bash",
@@ -222,7 +295,7 @@ PluginComponent {
     }
 
     function focusWorkspace(machine, ws) {
-        if (!machine || !ws)
+        if (!machine || !ws || !root.pluginDir)
             return;
         Quickshell.execDetached([
             "bash",
@@ -235,6 +308,8 @@ PluginComponent {
     }
 
     function focusHerdrWindow() {
+        if (!root.pluginDir)
+            return;
         Quickshell.execDetached(["bash", root.focusScript, "window"]);
     }
 
@@ -277,7 +352,7 @@ PluginComponent {
 
     Timer {
         interval: root.currentIntervalMs
-        running: true
+        running: !!root.pluginId
         repeat: true
         triggeredOnStart: true
         onTriggered: root.maybeRefresh()
@@ -396,9 +471,9 @@ PluginComponent {
 
                     // Summary status badges
                     StyledRect {
-                        height: 26
+                        height: summaryRow.implicitHeight + Theme.spacingXS * 2
                         width: summaryRow.implicitWidth + Theme.spacingM * 2
-                        radius: 13
+                        radius: Theme.cornerRadiusFull
                         color: Theme.surfaceContainer
 
                         Row {
@@ -407,12 +482,12 @@ PluginComponent {
                             spacing: Theme.spacingS
 
                             Row {
-                                spacing: 3
+                                spacing: Theme.spacingXXS
                                 visible: (root.totals.blocked || 0) > 0
                                 DankIcon {
                                     name: "warning"
                                     color: Theme.error
-                                    size: 14
+                                    size: Theme.iconSizeSmall
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
                                 StyledText {
@@ -425,11 +500,11 @@ PluginComponent {
                             }
 
                             Row {
-                                spacing: 3
+                                spacing: Theme.spacingXXS
                                 DankIcon {
                                     name: "bolt"
                                     color: Theme.primary
-                                    size: 14
+                                    size: Theme.iconSizeSmall
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
                                 StyledText {
@@ -441,11 +516,11 @@ PluginComponent {
                             }
 
                             Row {
-                                spacing: 3
+                                spacing: Theme.spacingXXS
                                 DankIcon {
                                     name: "pause_circle"
                                     color: Theme.warning
-                                    size: 14
+                                    size: Theme.iconSizeSmall
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
                                 StyledText {
@@ -457,12 +532,12 @@ PluginComponent {
                             }
 
                             Row {
-                                spacing: 3
+                                spacing: Theme.spacingXXS
                                 visible: (root.totals.done || 0) > 0
                                 DankIcon {
                                     name: "check_circle"
                                     color: Theme.success
-                                    size: 14
+                                    size: Theme.iconSizeSmall
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
                                 StyledText {
@@ -476,16 +551,16 @@ PluginComponent {
                     }
 
                     Item {
-                        width: Math.max(4, parent.width - summaryRow.parent.width - hcChip.width - refreshBtn.width - Theme.spacingXS * 3)
+                        width: Math.max(Theme.spacingXS, parent.width - summaryRow.parent.width - hcChip.width - refreshBtn.width - Theme.spacingXS * 3)
                         height: 1
                     }
 
                     // Quick toggle for Herdr Desktop App (hc)
                     StyledRect {
                         id: hcChip
-                        height: 26
+                        height: hcRow.implicitHeight + Theme.spacingXS * 2
                         width: hcRow.implicitWidth + Theme.spacingS * 2
-                        radius: 13
+                        radius: Theme.cornerRadiusFull
                         color: root.includeHerdrCore ? Theme.withAlpha(Theme.primary, 0.22) : Theme.surfaceContainer
                         border.width: 1
                         border.color: root.includeHerdrCore ? Theme.withAlpha(Theme.primary, 0.55) : "transparent"
@@ -493,11 +568,11 @@ PluginComponent {
                         Row {
                             id: hcRow
                             anchors.centerIn: parent
-                            spacing: 4
+                            spacing: Theme.spacingXS
 
                             DankIcon {
                                 name: "desktop_windows"
-                                size: 13
+                                size: Theme.iconSizeSmall
                                 color: root.includeHerdrCore ? Theme.primary : Theme.surfaceVariantText
                                 anchors.verticalCenter: parent.verticalCenter
                             }
@@ -520,15 +595,15 @@ PluginComponent {
                     // Refresh button
                     StyledRect {
                         id: refreshBtn
-                        width: 26
-                        height: 26
-                        radius: 13
+                        width: hcChip.height
+                        height: hcChip.height
+                        radius: Theme.cornerRadiusFull
                         color: refreshMouse.containsMouse ? Theme.surfaceContainerHighest : Theme.surfaceContainer
 
                         DankIcon {
                             anchors.centerIn: parent
                             name: sharedRefreshing.value ? "sync" : "refresh"
-                            size: 15
+                            size: Theme.iconSizeSmall
                             color: sharedRefreshing.value ? Theme.primary : Theme.surfaceText
                         }
 
@@ -543,10 +618,14 @@ PluginComponent {
                 }
 
                 // ── Machine Filter Chips ──
-                Flickable {
+                DFlickable {
                     width: parent.width
-                    height: 30
+                    height: chipsRow.implicitHeight + Theme.spacingXXS * 2
                     contentWidth: chipsRow.implicitWidth
+                    contentHeight: height
+                    flickableDirection: Flickable.HorizontalFlick
+                    showScrollBar: false
+                    fadeEdges: false
                     clip: true
                     boundsBehavior: Flickable.StopAtBounds
 
@@ -557,9 +636,9 @@ PluginComponent {
 
                         // "All" chip
                         StyledRect {
-                            height: 26
+                            height: allChipText.implicitHeight + Theme.spacingXS * 2
                             width: allChipText.implicitWidth + Theme.spacingM * 2
-                            radius: 13
+                            radius: Theme.cornerRadiusFull
                             anchors.verticalCenter: parent.verticalCenter
                             color: root.selectedMachine === "all" ? Theme.primary : Theme.surfaceContainer
 
@@ -588,9 +667,9 @@ PluginComponent {
                                 readonly property int mWorking: (modelData.counts && modelData.counts.working) || 0
                                 readonly property int mTotal: (modelData.counts && modelData.counts.total) || 0
 
-                                height: 26
+                                height: mChipRow.implicitHeight + Theme.spacingXS * 2
                                 width: mChipRow.implicitWidth + Theme.spacingM * 2
-                                radius: 13
+                                radius: Theme.cornerRadiusFull
                                 anchors.verticalCenter: parent.verticalCenter
                                 color: isSelected ? Theme.primary : Theme.surfaceContainer
                                 opacity: modelData.reachable ? 1.0 : 0.55
@@ -598,12 +677,12 @@ PluginComponent {
                                 Row {
                                     id: mChipRow
                                     anchors.centerIn: parent
-                                    spacing: 5
+                                    spacing: Theme.spacingXS
 
                                     Rectangle {
-                                        width: 7
-                                        height: 7
-                                        radius: 3.5
+                                        width: Theme.spacingS
+                                        height: Theme.spacingS
+                                        radius: Theme.cornerRadiusFull
                                         anchors.verticalCenter: parent.verticalCenter
                                         visible: !modelData.reachable || mBlocked > 0 || mWorking > 0
                                         color: !modelData.reachable ? Theme.outline : (mBlocked > 0 ? Theme.error : Theme.primary)
@@ -629,7 +708,7 @@ PluginComponent {
                 }
 
                 // ── Main Scrollable Tree: Machine -> Space -> Agents ──
-                Flickable {
+                DFlickable {
                     id: fleetFlick
                     width: parent.width
                     height: Math.min(400, Math.max(180, treeColumn.implicitHeight))
@@ -663,11 +742,12 @@ PluginComponent {
                                 // Machine Header
                                 StyledRect {
                                     width: parent.width
-                                    height: 28
+                                    height: machineHeaderRow.implicitHeight + Theme.spacingS
                                     radius: Theme.cornerRadius
                                     color: Theme.withAlpha(Theme.primary, 0.10)
 
                                     Row {
+                                        id: machineHeaderRow
                                         anchors.left: parent.left
                                         anchors.right: parent.right
                                         anchors.verticalCenter: parent.verticalCenter
@@ -676,7 +756,7 @@ PluginComponent {
 
                                         DankIcon {
                                             name: root.machineIcon(machineBlock.modelData)
-                                            size: 15
+                                            size: Theme.iconSizeSmall
                                             color: machineBlock.modelData.reachable ? Theme.primary : Theme.error
                                             anchors.verticalCenter: parent.verticalCenter
                                         }
@@ -708,32 +788,34 @@ PluginComponent {
                                         id: wsBlock
                                         required property var modelData
                                         width: machineBlock.width
-                                        spacing: 4
+                                        spacing: Theme.spacingXS
 
                                         // Space (Workspace) Subheader (clickable to focus space)
                                         StyledRect {
                                             width: parent.width
-                                            height: 24
-                                            radius: 6
+                                            height: wsHeaderRow.implicitHeight + Theme.spacingXS * 2
+                                            radius: Theme.cornerRadiusSmall
                                             color: wsMouse.containsMouse ? Theme.surfaceContainerHighest : "transparent"
 
                                             Row {
+                                                id: wsHeaderRow
                                                 anchors.left: parent.left
                                                 anchors.right: parent.right
                                                 anchors.verticalCenter: parent.verticalCenter
                                                 anchors.leftMargin: Theme.spacingS
                                                 anchors.rightMargin: Theme.spacingS
-                                                spacing: 6
+                                                spacing: Theme.spacingXS
 
                                                 DankIcon {
+                                                    id: wsFolderIcon
                                                     name: wsBlock.modelData.focused ? "folder_open" : "folder"
-                                                    size: 14
+                                                    size: Theme.iconSizeSmall
                                                     color: wsBlock.modelData.focused ? Theme.primary : Theme.surfaceVariantText
                                                     anchors.verticalCenter: parent.verticalCenter
                                                 }
 
                                                 StyledText {
-                                                    width: parent.width - 90
+                                                    width: parent.width - wsFolderIcon.width - wsPaneCountText.implicitWidth - wsHeaderRow.spacing * 2
                                                     elide: Text.ElideRight
                                                     text: "[" + (wsBlock.modelData.number || "?") + "] " + (wsBlock.modelData.label || wsBlock.modelData.workspace_id)
                                                     font.pixelSize: Theme.fontSizeSmall
@@ -743,8 +825,9 @@ PluginComponent {
                                                 }
 
                                                 StyledText {
+                                                    id: wsPaneCountText
                                                     text: (wsBlock.modelData.pane_count || 0) === 1 ? I18n.trFor("duxHerdrFleet", "1 pane") : I18n.trFor("duxHerdrFleet", "%1 panes").arg(wsBlock.modelData.pane_count || 0)
-                                                    font.pixelSize: 11
+                                                    font.pixelSize: Theme.fontSizeSmall
                                                     color: Theme.surfaceVariantText
                                                     opacity: 0.75
                                                     anchors.verticalCenter: parent.verticalCenter
@@ -797,17 +880,17 @@ PluginComponent {
                                                         id: agentCol
                                                         width: agentRow.width - statusIconItem.width - agentRow.spacing
                                                         anchors.verticalCenter: parent.verticalCenter
-                                                        spacing: 2
+                                                        spacing: Theme.spacingXXS
 
                                                         Row {
                                                             width: parent.width
-                                                            spacing: 6
+                                                            spacing: Theme.spacingXS
 
                                                             StyledRect {
                                                                 id: agentBadge
-                                                                height: 16
-                                                                width: badgeText.implicitWidth + 10
-                                                                radius: 4
+                                                                height: badgeText.implicitHeight + Theme.spacingXXS * 2
+                                                                width: badgeText.implicitWidth + Theme.spacingS
+                                                                radius: Theme.cornerRadiusXS
                                                                 color: Theme.withAlpha(root.statusColor(agentCard.modelData.agent_status), 0.18)
                                                                 anchors.verticalCenter: parent.verticalCenter
 
@@ -815,14 +898,14 @@ PluginComponent {
                                                                     id: badgeText
                                                                     anchors.centerIn: parent
                                                                     text: (agentCard.modelData.agent || "agent") + " · " + (agentCard.modelData.pane_id || "")
-                                                                    font.pixelSize: 10
+                                                                    font.pixelSize: Theme.fontSizeSmall
                                                                     font.weight: Font.Medium
                                                                     color: root.statusColor(agentCard.modelData.agent_status)
                                                                 }
                                                             }
 
                                                             StyledText {
-                                                                width: parent.width - agentBadge.width - 8
+                                                                width: parent.width - agentBadge.width - Theme.spacingS
                                                                 elide: Text.ElideRight
                                                                 text: agentCard.modelData.title || agentCard.modelData.agent
                                                                 color: Theme.surfaceText
@@ -849,7 +932,7 @@ PluginComponent {
                                                                 return parts.join("  ·  ");
                                                             }
                                                             color: Theme.surfaceVariantText
-                                                            font.pixelSize: 11
+                                                            font.pixelSize: Theme.fontSizeSmall
                                                         }
                                                     }
                                                 }

@@ -61,9 +61,9 @@ PluginSettings {
         settingKey: "refreshInterval"
         label: I18n.trFor("duxHerdrFleet", "Refresh interval")
         description: I18n.trFor("duxHerdrFleet", "How often to poll machine snapshots (seconds)")
-        defaultValue: 8
-        minimum: 3
-        maximum: 60
+        defaultValue: 15
+        minimum: 10
+        maximum: 120
         unit: I18n.trFor("duxHerdrFleet", "sec")
         leftIcon: "schedule"
     }

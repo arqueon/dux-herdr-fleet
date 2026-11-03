@@ -59,6 +59,11 @@ def run_json_cmd(cmd: list[str], timeout: float) -> dict[str, Any] | None:
 
 def get_configured_machines(include_remote: bool, timeout: float) -> list[dict[str, Any]]:
     hostname = socket.gethostname()
+    seen_targets: set[tuple[str, str]] = {
+        ("local", "default"),
+        ("localhost", "default"),
+        (hostname, "default"),
+    }
     machines: list[dict[str, Any]] = [
         {
             "id": "local",
@@ -84,19 +89,45 @@ def get_configured_machines(include_remote: bool, timeout: float) -> list[dict[s
             for raw in res.stdout.splitlines():
                 parts = raw.strip().split("\t")
                 if len(parts) >= 5 and parts[4] == "enabled":
+                    mid, target, session = parts[1], parts[2], parts[3] or "default"
+                    canon_key = (target, session)
+                    if canon_key in seen_targets:
+                        continue
+                    seen_targets.add(canon_key)
                     machines.append(
                         {
-                            "id": parts[1],
-                            "label": parts[1],
-                            "short_label": parts[1],
-                            "target": parts[2],
-                            "session": parts[3],
+                            "id": mid,
+                            "label": mid,
+                            "short_label": mid,
+                            "target": target,
+                            "session": session,
                             "isLocal": False,
                         }
                     )
     except Exception:
         pass
     return machines
+
+
+def deduplicate_herdr_agents(raw_agents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Deduplicate agents by canonical (workspace_id, pane_id), keeping active over stale."""
+    best_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    order: list[tuple[str, str]] = []
+    for idx, a in enumerate(raw_agents):
+        wid = str(a.get("workspace_id") or "default").strip()
+        pane_id = str(a.get("pane_id") or f"anon-{idx}").strip()
+        canon_key = (wid, pane_id)
+        st = str(a.get("agent_status") or "unknown").lower()
+        prio = STATUS_PRIORITY.get(st, 9)
+        if canon_key not in best_by_key:
+            order.append(canon_key)
+            best_by_key[canon_key] = a
+        else:
+            prev_st = str(best_by_key[canon_key].get("agent_status") or "unknown").lower()
+            prev_prio = STATUS_PRIORITY.get(prev_st, 9)
+            if prio < prev_prio or (prio == prev_prio and bool(a.get("focused"))):
+                best_by_key[canon_key] = a
+    return [best_by_key[k] for k in order]
 
 
 def parse_herdr_snapshot(
@@ -118,7 +149,7 @@ def parse_herdr_snapshot(
     snap = data["result"]["snapshot"]
     raw_workspaces = snap.get("workspaces") or []
     raw_panes = snap.get("panes") or []
-    raw_agents = snap.get("agents") or []
+    raw_agents = deduplicate_herdr_agents(snap.get("agents") or [])
 
     pane_by_id = {p.get("pane_id"): p for p in raw_panes if p.get("pane_id")}
     ws_by_id: dict[str, dict[str, Any]] = {}
@@ -126,7 +157,7 @@ def parse_herdr_snapshot(
 
     for w in sorted(raw_workspaces, key=lambda x: x.get("number", 999)):
         wid = w.get("workspace_id")
-        if not wid:
+        if not wid or wid in ws_by_id:
             continue
         ws_order.append(wid)
         ws_by_id[wid] = {
@@ -247,7 +278,16 @@ def fetch_hc(timeout: float, home: str) -> dict[str, Any] | None:
     if data is None:
         return None
 
-    terminals = [t for t in (data.get("terminals") or []) if t.get("status")]
+    raw_terminals = [t for t in (data.get("terminals") or []) if t.get("status")]
+    seen_addrs: set[str] = set()
+    terminals: list[dict[str, Any]] = []
+    for idx, t in enumerate(raw_terminals, start=1):
+        addr = str(t.get("address") or f"t{idx}").strip()
+        if addr in seen_addrs:
+            continue
+        seen_addrs.add(addr)
+        terminals.append(t)
+
     counts = {"total": 0, "blocked": 0, "working": 0, "idle": 0, "done": 0, "unknown": 0}
     agents = []
 
