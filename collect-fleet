@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Parallel multi-machine & workspace collector for DMS Herdr Fleet (dmsHerdr).
+"""Parallel multi-machine & workspace collector for Dux Herdr Fleet (duxHerdrFleet).
 
 Queries local `herdr api snapshot`, all enabled SSH machines from `herdr machine list`,
 and optionally `hc ls --json` (Herdr Desktop App / herdr-core), returning a single
