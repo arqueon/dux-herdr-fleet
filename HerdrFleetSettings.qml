@@ -9,7 +9,7 @@ PluginSettings {
 
     StyledText {
         width: parent.width
-        text: "Dux Herdr Fleet"
+        text: I18n.trFor("duxHerdrFleet", "Dux Herdr Fleet")
         font.pixelSize: Theme.fontSizeLarge
         font.weight: Font.Medium
         color: Theme.surfaceText
@@ -34,7 +34,7 @@ PluginSettings {
         settingKey: "includeHerdrCore"
         label: I18n.trFor("duxHerdrFleet", "Include Herdr Desktop App (hc)")
         description: I18n.trFor("duxHerdrFleet", "Queries `hc ls --json` (`herdr-core`) to include terminals from the graphical desktop app")
-        defaultValue: true
+        defaultValue: false
     }
 
     ToggleSetting {

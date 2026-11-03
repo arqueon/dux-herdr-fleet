@@ -361,7 +361,7 @@ def fetch_hc(timeout: float, home: str) -> dict[str, Any] | None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Collect Herdr multi-machine fleet status")
-    parser.add_argument("--include-hc", default="1", help="1 to query hc (herdr-core), 0 to skip")
+    parser.add_argument("--include-hc", default="0", help="1 to query hc (herdr-core), 0 to skip")
     parser.add_argument("--include-remote", default="1", help="1 to query remote SSH machines, 0 for local only")
     parser.add_argument("--include-empty-spaces", default="1", help="1 to include workspaces without agents")
     parser.add_argument("--timeout", type=float, default=3.5, help="Per-machine timeout in seconds")

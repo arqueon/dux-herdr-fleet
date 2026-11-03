@@ -13,7 +13,7 @@ PluginComponent {
     property var popoutService: null
 
     readonly property bool includeRemoteMachines: pluginData.includeRemoteMachines ?? true
-    readonly property bool includeHerdrCore: pluginData.includeHerdrCore ?? true
+    readonly property bool includeHerdrCore: pluginData.includeHerdrCore ?? false
     readonly property bool includeEmptySpaces: pluginData.includeEmptySpaces ?? false
     readonly property string pillDisplayMode: pluginData.pillDisplayMode || "breakdown"
     readonly property int baseIntervalMs: Math.max(10, (pluginData.refreshInterval || 15)) * 1000
@@ -101,6 +101,16 @@ PluginComponent {
         case "idle": return "pause_circle";
         case "done": return "check_circle";
         default: return "help";
+        }
+    }
+
+    function statusLabel(st) {
+        switch (st) {
+        case "blocked": return I18n.trFor("duxHerdrFleet", "blocked");
+        case "working": return I18n.trFor("duxHerdrFleet", "working");
+        case "idle": return I18n.trFor("duxHerdrFleet", "idle");
+        case "done": return I18n.trFor("duxHerdrFleet", "done");
+        default: return I18n.trFor("duxHerdrFleet", "unknown");
         }
     }
 
@@ -358,8 +368,8 @@ PluginComponent {
         onTriggered: root.maybeRefresh()
     }
 
-    popoutWidth: 440
-    popoutHeight: 540
+    popoutWidth: Theme.smallBreakpoint
+    popoutHeight: Theme.dialogMaxWidth
 
     horizontalBarPill: Component {
         Item {
@@ -389,7 +399,7 @@ PluginComponent {
 
             MouseArea {
                 anchors.fill: parent
-                anchors.margins: -6
+                anchors.margins: -Theme.spacingXS
                 acceptedButtons: Qt.MiddleButton
                 onClicked: mouse => {
                     if (mouse.button === Qt.MiddleButton)
@@ -426,7 +436,7 @@ PluginComponent {
 
             MouseArea {
                 anchors.fill: parent
-                anchors.margins: -6
+                anchors.margins: -Theme.spacingXS
                 acceptedButtons: Qt.MiddleButton
                 onClicked: mouse => {
                     if (mouse.button === Qt.MiddleButton)
@@ -439,8 +449,8 @@ PluginComponent {
     popoutContent: Component {
         PopoutComponent {
             id: popout
-            headerText: "Dux Herdr Fleet"
-            detailsText: (root.totals.agents || 0) + " " + I18n.trFor("duxHerdrFleet", "agents") + " · " + (root.totals.workspaces || 0) + " spaces · " + (root.totals.machines_reachable || 0) + "/" + (root.totals.machines_total || 0) + " hosts"
+            headerText: I18n.trFor("duxHerdrFleet", "Dux Herdr Fleet")
+            detailsText: I18n.trFor("duxHerdrFleet", "%1 agents · %2 spaces · %3/%4 hosts").arg(root.totals.agents || 0).arg(root.totals.workspaces || 0).arg(root.totals.machines_reachable || 0).arg(root.totals.machines_total || 0)
             showCloseButton: true
 
             onParentPopoutChanged: {
@@ -491,7 +501,7 @@ PluginComponent {
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
                                 StyledText {
-                                    text: (root.totals.blocked || 0) + " blocked"
+                                    text: I18n.trFor("duxHerdrFleet", "%1 blocked").arg(root.totals.blocked || 0)
                                     color: Theme.error
                                     font.pixelSize: Theme.fontSizeSmall
                                     font.weight: Font.Bold
@@ -508,7 +518,7 @@ PluginComponent {
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
                                 StyledText {
-                                    text: (root.totals.working || 0) + " working"
+                                    text: I18n.trFor("duxHerdrFleet", "%1 working").arg(root.totals.working || 0)
                                     color: Theme.surfaceText
                                     font.pixelSize: Theme.fontSizeSmall
                                     anchors.verticalCenter: parent.verticalCenter
@@ -524,7 +534,7 @@ PluginComponent {
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
                                 StyledText {
-                                    text: (root.totals.idle || 0) + " idle"
+                                    text: I18n.trFor("duxHerdrFleet", "%1 idle").arg(root.totals.idle || 0)
                                     color: Theme.surfaceText
                                     font.pixelSize: Theme.fontSizeSmall
                                     anchors.verticalCenter: parent.verticalCenter
@@ -541,7 +551,7 @@ PluginComponent {
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
                                 StyledText {
-                                    text: (root.totals.done || 0) + " done"
+                                    text: I18n.trFor("duxHerdrFleet", "%1 done").arg(root.totals.done || 0)
                                     color: Theme.surfaceText
                                     font.pixelSize: Theme.fontSizeSmall
                                     anchors.verticalCenter: parent.verticalCenter
@@ -562,7 +572,7 @@ PluginComponent {
                         width: hcRow.implicitWidth + Theme.spacingS * 2
                         radius: Theme.cornerRadiusFull
                         color: root.includeHerdrCore ? Theme.withAlpha(Theme.primary, 0.22) : Theme.surfaceContainer
-                        border.width: 1
+                        border.width: root.includeHerdrCore ? Theme.outlineWidth : 0
                         border.color: root.includeHerdrCore ? Theme.withAlpha(Theme.primary, 0.55) : "transparent"
 
                         Row {
@@ -645,7 +655,7 @@ PluginComponent {
                             StyledText {
                                 id: allChipText
                                 anchors.centerIn: parent
-                                text: I18n.trFor("duxHerdrFleet", "All") + " (" + (root.totals.agents || 0) + ")"
+                                text: I18n.trFor("duxHerdrFleet", "All (%1)").arg(root.totals.agents || 0)
                                 font.pixelSize: Theme.fontSizeSmall
                                 font.weight: root.selectedMachine === "all" ? Font.Medium : Font.Normal
                                 color: root.selectedMachine === "all" ? Theme.onPrimary : Theme.surfaceText
@@ -711,7 +721,7 @@ PluginComponent {
                 DFlickable {
                     id: fleetFlick
                     width: parent.width
-                    height: Math.min(400, Math.max(180, treeColumn.implicitHeight))
+                    height: Math.min(Theme.menuMaxHeight, Math.max(Theme.listItemHeight * 3, treeColumn.implicitHeight))
                     contentWidth: width
                     contentHeight: treeColumn.implicitHeight
                     clip: true
@@ -771,8 +781,8 @@ PluginComponent {
 
                                         StyledText {
                                             text: machineBlock.modelData.reachable
-                                                ? "· " + ((machineBlock.modelData.workspaces || []).length) + " spaces · " + ((machineBlock.modelData.counts && machineBlock.modelData.counts.total) || 0) + " " + I18n.trFor("duxHerdrFleet", "agents")
-                                                : "· " + I18n.trFor("duxHerdrFleet", "offline")
+                                                ? I18n.trFor("duxHerdrFleet", "· %1 spaces · %2 agents").arg((machineBlock.modelData.workspaces || []).length).arg((machineBlock.modelData.counts && machineBlock.modelData.counts.total) || 0)
+                                                : I18n.trFor("duxHerdrFleet", "· offline")
                                             font.pixelSize: Theme.fontSizeSmall
                                             color: machineBlock.modelData.reachable ? Theme.surfaceVariantText : Theme.error
                                             anchors.verticalCenter: parent.verticalCenter
@@ -857,7 +867,7 @@ PluginComponent {
                                                 height: agentCol.implicitHeight + Theme.spacingS * 2
                                                 radius: Theme.cornerRadius
                                                 color: agentMouse.containsMouse ? Theme.surfaceContainerHighest : Theme.surfaceContainer
-                                                border.width: modelData.agent_status === "blocked" ? 1 : 0
+                                                border.width: modelData.agent_status === "blocked" ? Theme.outlineWidth : 0
                                                 border.color: modelData.agent_status === "blocked" ? Theme.error : "transparent"
 
                                                 Row {
@@ -897,7 +907,7 @@ PluginComponent {
                                                                 StyledText {
                                                                     id: badgeText
                                                                     anchors.centerIn: parent
-                                                                    text: (agentCard.modelData.agent || "agent") + " · " + (agentCard.modelData.pane_id || "")
+                                                                    text: (agentCard.modelData.agent || I18n.trFor("duxHerdrFleet", "agent")) + " · " + (agentCard.modelData.pane_id || "")
                                                                     font.pixelSize: Theme.fontSizeSmall
                                                                     font.weight: Font.Medium
                                                                     color: root.statusColor(agentCard.modelData.agent_status)
@@ -928,7 +938,7 @@ PluginComponent {
                                                                     parts.push(agentCard.modelData.context);
                                                                 if (agentCard.modelData.limit)
                                                                     parts.push(agentCard.modelData.limit);
-                                                                parts.push(agentCard.modelData.agent_status);
+                                                                parts.push(root.statusLabel(agentCard.modelData.agent_status));
                                                                 return parts.join("  ·  ");
                                                             }
                                                             color: Theme.surfaceVariantText

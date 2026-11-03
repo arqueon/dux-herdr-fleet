@@ -32,7 +32,6 @@
   "distro": [
     "any"
   ],
-  "requires_dms": ">=1.5.0",
-  "i18n": true,
+  "requires_dms": ">=2.0.0",
   "screenshot": "https://raw.githubusercontent.com/arqueon/dux-herdr-fleet/main/assets/screenshot.png"
 }

@@ -1,12 +1,48 @@
 {
-  "All": {
-    "All": "Todas"
+  "Dux Herdr Fleet": {
+    "Dux Herdr Fleet": "Dux Herdr Fleet"
   },
-  "agents": {
-    "agents": "agentes"
+  "%1 agents · %2 spaces · %3/%4 hosts": {
+    "%1 agents · %2 spaces · %3/%4 hosts": "%1 agentes · %2 spaces · %3/%4 hosts"
   },
-  "offline": {
-    "offline": "sin conexión"
+  "%1 blocked": {
+    "%1 blocked": "%1 bloqueados"
+  },
+  "%1 working": {
+    "%1 working": "%1 trabajando"
+  },
+  "%1 idle": {
+    "%1 idle": "%1 en espera"
+  },
+  "%1 done": {
+    "%1 done": "%1 listos"
+  },
+  "All (%1)": {
+    "All (%1)": "Todas (%1)"
+  },
+  "· %1 spaces · %2 agents": {
+    "· %1 spaces · %2 agents": "· %1 spaces · %2 agentes"
+  },
+  "· offline": {
+    "· offline": "· sin conexión"
+  },
+  "agent": {
+    "agent": "agente"
+  },
+  "blocked": {
+    "blocked": "bloqueado"
+  },
+  "working": {
+    "working": "trabajando"
+  },
+  "idle": {
+    "idle": "en espera"
+  },
+  "done": {
+    "done": "listo"
+  },
+  "unknown": {
+    "unknown": "desconocido"
   },
   "1 pane": {
     "1 pane": "1 panel"
