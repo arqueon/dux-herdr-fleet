@@ -61,7 +61,9 @@ PluginComponent {
     readonly property string selectedMachine: sharedSelectedMachine.value || "all"
     readonly property int currentIntervalMs: Math.min(baseIntervalMs * Math.pow(2, sharedFailures.value), maxIntervalMs)
 
-    property bool popoutIsOpen: false
+    property var fleetPopout: null
+    property bool fleetOpenRequested: false
+    property real fleetOpenRequestedAt: 0
 
     Component.onCompleted: Local.HerdrFleetController.registerRoot(root)
     Component.onDestruction: Local.HerdrFleetController.unregisterRoot(root)
@@ -237,22 +239,31 @@ PluginComponent {
     }
 
     // IPC handlers
+    function isPopoutOpen() {
+        if (fleetOpenRequested && Date.now() - fleetOpenRequestedAt >= 1500)
+            fleetOpenRequested = false;
+        return fleetOpenRequested || !!fleetPopout?.shouldBeVisible;
+    }
+
     function openFromIpc() {
-        if (popoutIsOpen)
+        if (isPopoutOpen())
             return "HERDR_ALREADY_OPEN";
+        fleetOpenRequested = true;
+        fleetOpenRequestedAt = Date.now();
         triggerPopout();
         return "HERDR_OPENING";
     }
 
     function closeFromIpc() {
-        if (!popoutIsOpen)
+        if (!isPopoutOpen())
             return "HERDR_ALREADY_CLOSED";
+        fleetOpenRequested = false;
         closePopout();
         return "HERDR_CLOSED";
     }
 
     function toggleFromIpc() {
-        return popoutIsOpen ? closeFromIpc() : openFromIpc();
+        return isPopoutOpen() ? closeFromIpc() : openFromIpc();
     }
 
     function refreshFromIpc() {
@@ -357,12 +368,21 @@ PluginComponent {
             detailsText: (root.totals.agents || 0) + " agentes · " + (root.totals.workspaces || 0) + " spaces · " + (root.totals.machines_reachable || 0) + "/" + (root.totals.machines_total || 0) + " hosts"
             showCloseButton: true
 
+            onParentPopoutChanged: {
+                if (parentPopout)
+                    root.fleetPopout = parentPopout;
+            }
             Component.onCompleted: {
-                root.popoutIsOpen = true;
+                if (parentPopout)
+                    root.fleetPopout = parentPopout;
                 root.refreshNow();
             }
-            Component.onDestruction: {
-                root.popoutIsOpen = false;
+            Connections {
+                target: popout.parentPopout
+                function onOpened() {
+                    root.fleetOpenRequested = false;
+                    root.refreshNow();
+                }
             }
 
             Column {
@@ -430,6 +450,23 @@ PluginComponent {
                                 }
                                 StyledText {
                                     text: (root.totals.idle || 0) + " idle"
+                                    color: Theme.surfaceText
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                            }
+
+                            Row {
+                                spacing: 3
+                                visible: (root.totals.done || 0) > 0
+                                DankIcon {
+                                    name: "check_circle"
+                                    color: Theme.success
+                                    size: 14
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                                StyledText {
+                                    text: (root.totals.done || 0) + " done"
                                     color: Theme.surfaceText
                                     font.pixelSize: Theme.fontSizeSmall
                                     anchors.verticalCenter: parent.verticalCenter
@@ -706,7 +743,7 @@ PluginComponent {
                                                 }
 
                                                 StyledText {
-                                                    text: (wsBlock.modelData.pane_count || 0) + " paneles"
+                                                    text: (wsBlock.modelData.pane_count || 0) === 1 ? "1 panel" : (wsBlock.modelData.pane_count || 0) + " paneles"
                                                     font.pixelSize: 11
                                                     color: Theme.surfaceVariantText
                                                     opacity: 0.75

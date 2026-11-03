@@ -2,7 +2,9 @@
 
 Multi-machine & workspace agent monitor for [DankMaterialShell](https://danklinux.com) and [herdr](https://herdr.dev) (plus the new **Herdr Desktop App** via `hc` / `herdr-core`).
 
-Inspired by and expanded from [`Mor-dev/herdr-agent-monitor`](https://github.com/Mor-dev/herdr-agent-monitor).
+> **Note:** Fork of [`Mor-dev/herdr-agent-monitor`](https://github.com/Mor-dev/herdr-agent-monitor) (`herdrAgentMonitor`), expanded to monitor all configured SSH machines (`herdr machine list` + `herdr api snapshot`), group agents hierarchically by machine and workspace/space, and include a live toggle for **`hc`** (`herdr-core` / Herdr Desktop App).
+
+![Dux Herdr Fleet popout](assets/screenshot.png)
 
 ## Features
 

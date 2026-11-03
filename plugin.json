@@ -2,7 +2,7 @@
   "$schema": "https://github.com/AvengeMedia/DankMaterialShell/raw/refs/heads/master/PLUGINS/plugin-schema.json",
   "id": "duxHerdrFleet",
   "name": "Dux Herdr Fleet",
-  "description": "Multi-machine and workspace agent monitor for herdr and Herdr Desktop App (hc) with live status, context tokens, machine filter and one-click pane focus",
+  "description": "Multi-machine and workspace agent monitor for herdr and Herdr Desktop App (hc) with live status, context tokens, machine filter and one-click pane focus. Fork of Mor-dev/herdr-agent-monitor expanded to all machines and hc.",
   "version": "1.0.0",
   "author": "arqueon",
   "repo": "https://github.com/arqueon/dux-herdr-fleet",
@@ -31,5 +31,6 @@
   "distro": [
     "any"
   ],
-  "requires_dms": ">=1.5.0"
+  "requires_dms": ">=1.5.0",
+  "screenshot": "https://raw.githubusercontent.com/arqueon/dux-herdr-fleet/main/assets/screenshot.png"
 }
