@@ -452,7 +452,6 @@ PluginComponent {
             id: popout
             headerText: I18n.trFor("duxHerdrFleet", "Dux Herdr Fleet")
             detailsText: I18n.trFor("duxHerdrFleet", "%1 agents · %2 spaces · %3/%4 hosts").arg(root.totals.agents || 0).arg(root.totals.workspaces || 0).arg(root.totals.machines_reachable || 0).arg(root.totals.machines_total || 0)
-            showCloseButton: true
 
             onParentPopoutChanged: {
                 if (parentPopout)
