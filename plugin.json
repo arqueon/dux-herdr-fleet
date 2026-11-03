@@ -6,7 +6,7 @@
   "version": "1.0.0",
   "author": "arqueon",
   "repo": "https://github.com/arqueon/dux-herdr-fleet",
-  "icon": "hub",
+  "icon": "smart_toy",
   "type": "widget",
   "category": "monitoring",
   "capabilities": [

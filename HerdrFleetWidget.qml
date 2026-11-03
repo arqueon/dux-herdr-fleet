@@ -405,7 +405,7 @@ PluginComponent {
                 spacing: Theme.spacingS
 
                 DankIcon {
-                    name: "hub"
+                    name: "smart_toy"
                     color: root.barIconColor
                     size: Theme.barIconSize(root.barThickness, -Theme.spacingXS)
                     anchors.verticalCenter: parent.verticalCenter
@@ -443,7 +443,7 @@ PluginComponent {
                 spacing: Theme.spacingXS
 
                 DankIcon {
-                    name: "hub"
+                    name: "smart_toy"
                     color: root.barIconColor
                     size: Theme.barIconSize(root.barThickness, -Theme.spacingXS)
                     anchors.horizontalCenter: parent.horizontalCenter
