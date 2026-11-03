@@ -54,12 +54,18 @@ PluginComponent {
         varName: "isRefreshing"
         defaultValue: false
     }
+    PluginGlobalVar {
+        id: sharedSearchQuery
+        varName: "searchQuery"
+        defaultValue: ""
+    }
 
     readonly property var fleet: sharedFleet.value || ({ totals: {}, machines: [], agents: [] })
     readonly property var totals: fleet.totals || ({ machines_total: 0, machines_reachable: 0, workspaces: 0, agents: 0, blocked: 0, working: 0, idle: 0, done: 0 })
     readonly property var machines: fleet.machines || []
     readonly property var agents: fleet.agents || []
     readonly property string selectedMachine: sharedSelectedMachine.value || "all"
+    readonly property string searchQuery: (sharedSearchQuery.value || "").trim().toLowerCase()
     readonly property int currentIntervalMs: Math.min(baseIntervalMs * Math.pow(2, sharedFailures.value), maxIntervalMs)
 
     property var fleetPopout: null
@@ -162,6 +168,87 @@ PluginComponent {
                 filtered.push(list[i]);
         }
         return filtered.length > 0 ? filtered : list;
+    }
+
+    function agentMatchesSearch(ag, m, ws, q) {
+        if (!q)
+            return true;
+        var haystack = [
+            ag ? (ag.title || "") : "",
+            ag ? (ag.subtitle || "") : "",
+            ag ? (ag.agent || "") : "",
+            ag ? (ag.pane_id || "") : "",
+            ag ? (ag.cwd || "") : "",
+            ag ? (ag.agent_status || "") : "",
+            ag ? root.statusLabel(ag.agent_status) : "",
+            ws ? (ws.label || "") : "",
+            ws ? (ws.workspace_id || "") : "",
+            m ? (m.label || "") : "",
+            m ? (m.short_label || "") : "",
+            m ? (m.id || "") : "",
+            m ? (m.backend || "") : ""
+        ].join(" ").toLowerCase();
+        var terms = q.split(/\s+/);
+        for (var i = 0; i < terms.length; i++) {
+            if (terms[i] && haystack.indexOf(terms[i]) < 0)
+                return false;
+        }
+        return true;
+    }
+
+    function filteredAgentsForWorkspace(m, ws) {
+        var list = (ws && ws.agents) || [];
+        var q = root.searchQuery;
+        if (!q)
+            return list;
+        var out = [];
+        for (var i = 0; i < list.length; i++) {
+            if (root.agentMatchesSearch(list[i], m, ws, q))
+                out.push(list[i]);
+        }
+        return out;
+    }
+
+    function filteredWorkspacesForMachine(m) {
+        var wsList = (m && m.workspaces) || [];
+        var q = root.searchQuery;
+        if (!q)
+            return wsList;
+        var out = [];
+        for (var i = 0; i < wsList.length; i++) {
+            var ws = wsList[i];
+            var matchedAgents = root.filteredAgentsForWorkspace(m, ws);
+            if (matchedAgents.length > 0 || (root.includeEmptySpaces && root.agentMatchesSearch(null, m, ws, q)))
+                out.push(ws);
+        }
+        return out;
+    }
+
+    readonly property var firstMatchingAgent: {
+        var mList = root.visibleMachines || [];
+        for (var i = 0; i < mList.length; i++) {
+            var m = mList[i];
+            var wsList = root.filteredWorkspacesForMachine(m);
+            for (var j = 0; j < wsList.length; j++) {
+                var agList = root.filteredAgentsForWorkspace(m, wsList[j]);
+                if (agList.length > 0)
+                    return agList[0];
+            }
+        }
+        return null;
+    }
+
+    readonly property int matchingAgentCount: {
+        var count = 0;
+        var mList = root.visibleMachines || [];
+        for (var i = 0; i < mList.length; i++) {
+            var m = mList[i];
+            var wsList = root.filteredWorkspacesForMachine(m);
+            for (var j = 0; j < wsList.length; j++) {
+                count += root.filteredAgentsForWorkspace(m, wsList[j]).length;
+            }
+        }
+        return count;
     }
 
     function mergeCachedRemoteMachines(freshPayload) {
@@ -484,12 +571,14 @@ PluginComponent {
                 if (parentPopout)
                     root.fleetPopout = parentPopout;
                 root.refreshNow();
+                Qt.callLater(() => searchInput.forceActiveFocus());
             }
             Connections {
                 target: popout.parentPopout
                 function onOpened() {
                     root.fleetOpenRequested = false;
                     root.refreshNow();
+                    Qt.callLater(() => searchInput.forceActiveFocus());
                 }
             }
 
@@ -650,6 +739,101 @@ PluginComponent {
                     }
                 }
 
+                // ── Live Search Bar ──
+                StyledRect {
+                    id: searchBarRect
+                    width: parent.width
+                    height: Theme.listItemHeight - Theme.spacingS
+                    radius: Theme.cornerRadius
+                    color: Theme.surfaceContainer
+                    border.width: Theme.outlineWidth
+                    border.color: searchInput.activeFocus ? Theme.primary : "transparent"
+
+                    DankIcon {
+                        id: searchBarIcon
+                        name: "search"
+                        size: Theme.iconSizeSmall
+                        color: searchInput.activeFocus ? Theme.primary : Theme.surfaceVariantText
+                        anchors.left: parent.left
+                        anchors.leftMargin: Theme.spacingS
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+
+                    Item {
+                        anchors.left: searchBarIcon.right
+                        anchors.leftMargin: Theme.spacingXS
+                        anchors.right: clearSearchBtn.visible ? clearSearchBtn.left : parent.right
+                        anchors.rightMargin: Theme.spacingS
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+
+                        StyledText {
+                            visible: searchInput.text.length === 0
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            elide: Text.ElideRight
+                            text: I18n.trFor("duxHerdrFleet", "Search agents, spaces, machines, cwd…")
+                            color: Theme.surfaceVariantText
+                            font.pixelSize: Theme.fontSizeSmall
+                        }
+
+                        TextInput {
+                            id: searchInput
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            clip: true
+                            selectByMouse: true
+                            color: Theme.surfaceText
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSizeSmall
+                            text: sharedSearchQuery.value || ""
+                            onTextChanged: {
+                                if ((sharedSearchQuery.value || "") !== text)
+                                    sharedSearchQuery.set(text);
+                            }
+                            onAccepted: {
+                                if (root.firstMatchingAgent) {
+                                    root.focusAgent(root.firstMatchingAgent);
+                                    popout.closePopout();
+                                }
+                            }
+                        }
+                    }
+
+                    StyledRect {
+                        id: clearSearchBtn
+                        visible: searchInput.text.length > 0
+                        width: Theme.iconSizeSmall + Theme.spacingS
+                        height: Theme.iconSizeSmall + Theme.spacingS
+                        radius: Theme.cornerRadiusFull
+                        anchors.right: parent.right
+                        anchors.rightMargin: Theme.spacingXS
+                        anchors.verticalCenter: parent.verticalCenter
+                        color: clearSearchMouse.containsMouse ? Theme.surfaceContainerHighest : "transparent"
+
+                        DankIcon {
+                            anchors.centerIn: parent
+                            name: "close"
+                            size: Theme.iconSizeSmall
+                            color: Theme.surfaceVariantText
+                        }
+
+                        MouseArea {
+                            id: clearSearchMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                searchInput.text = "";
+                                sharedSearchQuery.set("");
+                                searchInput.forceActiveFocus();
+                            }
+                        }
+                    }
+                }
+
                 // ── Machine Filter Chips (multi-row Flow so all machines & hc hosts are visible) ──
                 Flow {
                     id: chipsFlow
@@ -743,8 +927,15 @@ PluginComponent {
                         spacing: Theme.spacingM
 
                         StyledText {
-                            visible: (root.totals.agents || 0) === 0 && !sharedRefreshing.value
+                            visible: (root.totals.agents || 0) === 0 && !sharedRefreshing.value && !root.searchQuery
                             text: I18n.trFor("duxHerdrFleet", "No active agents across monitored machines")
+                            color: Theme.surfaceVariantText
+                            font.pixelSize: Theme.fontSizeMedium
+                        }
+
+                        StyledText {
+                            visible: root.searchQuery.length > 0 && root.matchingAgentCount === 0
+                            text: I18n.trFor("duxHerdrFleet", "No agents match \"%1\"").arg(sharedSearchQuery.value || "")
                             color: Theme.surfaceVariantText
                             font.pixelSize: Theme.fontSizeMedium
                         }
@@ -755,9 +946,10 @@ PluginComponent {
                             delegate: Column {
                                 id: machineBlock
                                 required property var modelData
+                                readonly property var visibleWorkspaces: root.filteredWorkspacesForMachine(machineBlock.modelData)
                                 width: treeColumn.width
                                 spacing: Theme.spacingXS
-                                visible: (modelData.workspaces && modelData.workspaces.length > 0) || !modelData.reachable || root.selectedMachine === modelData.id
+                                visible: visibleWorkspaces.length > 0 || (!root.searchQuery && (!modelData.reachable || root.selectedMachine === modelData.id))
 
                                 // Machine Header (shown when multiple machines exist or when local is unreachable)
                                 StyledRect {
@@ -802,7 +994,7 @@ PluginComponent {
                                 }
 
                                 StyledText {
-                                    visible: machineBlock.modelData.reachable && (!machineBlock.modelData.workspaces || machineBlock.modelData.workspaces.length === 0) && root.selectedMachine === machineBlock.modelData.id
+                                    visible: !root.searchQuery && machineBlock.modelData.reachable && (!machineBlock.modelData.workspaces || machineBlock.modelData.workspaces.length === 0) && root.selectedMachine === machineBlock.modelData.id
                                     text: I18n.trFor("duxHerdrFleet", "No active agents on this machine")
                                     color: Theme.surfaceVariantText
                                     font.pixelSize: Theme.fontSizeSmall
@@ -810,11 +1002,12 @@ PluginComponent {
 
                                 // Workspaces inside this Machine
                                 Repeater {
-                                    model: machineBlock.modelData.workspaces || []
+                                    model: machineBlock.visibleWorkspaces
 
                                     delegate: Column {
                                         id: wsBlock
                                         required property var modelData
+                                        readonly property var visibleAgents: root.filteredAgentsForWorkspace(machineBlock.modelData, wsBlock.modelData)
                                         width: machineBlock.width
                                         spacing: Theme.spacingXS
 
@@ -876,7 +1069,7 @@ PluginComponent {
 
                                         // Agents inside this Space
                                         Repeater {
-                                            model: wsBlock.modelData.agents || []
+                                            model: wsBlock.visibleAgents
 
                                             delegate: StyledRect {
                                                 id: agentCard

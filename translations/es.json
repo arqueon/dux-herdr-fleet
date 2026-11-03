@@ -56,6 +56,12 @@
   "No active agents on this machine": {
     "No active agents on this machine": "No hay agentes activos en esta máquina"
   },
+  "Search agents, spaces, machines, cwd…": {
+    "Search agents, spaces, machines, cwd…": "Buscar agentes, spaces, máquinas, ruta…"
+  },
+  "No agents match \"%1\"": {
+    "No agents match \"%1\"": "Ningún agente coincide con \"%1\""
+  },
   "Monitors herdr agents and workspaces across your local machine, remote SSH machines (`herdr machine list`), and optionally the Herdr Desktop App (`hc` / `herdr-core`). Left-click opens the popout, right-click refreshes, middle-click focuses the herdr window.": {
     "Monitors herdr agents and workspaces across your local machine, remote SSH machines (`herdr machine list`), and optionally the Herdr Desktop App (`hc` / `herdr-core`). Left-click opens the popout, right-click refreshes, middle-click focuses the herdr window.": "Supervisa agentes y spaces de herdr en tu máquina local, máquinas remotas por SSH (`herdr machine list`) y opcionalmente la nueva Herdr Desktop App (`hc` / `herdr-core`). Clic izquierdo abre el panel, clic derecho refresca, clic medio enfoca la ventana de herdr."
   },
