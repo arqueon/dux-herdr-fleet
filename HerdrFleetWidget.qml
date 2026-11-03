@@ -365,7 +365,7 @@ PluginComponent {
         PopoutComponent {
             id: popout
             headerText: "Dux Herdr Fleet"
-            detailsText: (root.totals.agents || 0) + " agentes · " + (root.totals.workspaces || 0) + " spaces · " + (root.totals.machines_reachable || 0) + "/" + (root.totals.machines_total || 0) + " hosts"
+            detailsText: (root.totals.agents || 0) + " " + I18n.trFor("duxHerdrFleet", "agents") + " · " + (root.totals.workspaces || 0) + " spaces · " + (root.totals.machines_reachable || 0) + "/" + (root.totals.machines_total || 0) + " hosts"
             showCloseButton: true
 
             onParentPopoutChanged: {
@@ -555,7 +555,7 @@ PluginComponent {
                         spacing: Theme.spacingXS
                         height: parent.height
 
-                        // "Todas" chip
+                        // "All" chip
                         StyledRect {
                             height: 26
                             width: allChipText.implicitWidth + Theme.spacingM * 2
@@ -566,7 +566,7 @@ PluginComponent {
                             StyledText {
                                 id: allChipText
                                 anchors.centerIn: parent
-                                text: "Todas (" + (root.totals.agents || 0) + ")"
+                                text: I18n.trFor("duxHerdrFleet", "All") + " (" + (root.totals.agents || 0) + ")"
                                 font.pixelSize: Theme.fontSizeSmall
                                 font.weight: root.selectedMachine === "all" ? Font.Medium : Font.Normal
                                 color: root.selectedMachine === "all" ? Theme.onPrimary : Theme.surfaceText
@@ -645,7 +645,7 @@ PluginComponent {
 
                         StyledText {
                             visible: (root.totals.agents || 0) === 0 && !sharedRefreshing.value
-                            text: "No hay agentes activos en las máquinas monitoreadas"
+                            text: I18n.trFor("duxHerdrFleet", "No active agents across monitored machines")
                             color: Theme.surfaceVariantText
                             font.pixelSize: Theme.fontSizeMedium
                         }
@@ -691,8 +691,8 @@ PluginComponent {
 
                                         StyledText {
                                             text: machineBlock.modelData.reachable
-                                                ? "· " + ((machineBlock.modelData.workspaces || []).length) + " spaces · " + ((machineBlock.modelData.counts && machineBlock.modelData.counts.total) || 0) + " agentes"
-                                                : "· sin conexión"
+                                                ? "· " + ((machineBlock.modelData.workspaces || []).length) + " spaces · " + ((machineBlock.modelData.counts && machineBlock.modelData.counts.total) || 0) + " " + I18n.trFor("duxHerdrFleet", "agents")
+                                                : "· " + I18n.trFor("duxHerdrFleet", "offline")
                                             font.pixelSize: Theme.fontSizeSmall
                                             color: machineBlock.modelData.reachable ? Theme.surfaceVariantText : Theme.error
                                             anchors.verticalCenter: parent.verticalCenter
@@ -743,7 +743,7 @@ PluginComponent {
                                                 }
 
                                                 StyledText {
-                                                    text: (wsBlock.modelData.pane_count || 0) === 1 ? "1 panel" : (wsBlock.modelData.pane_count || 0) + " paneles"
+                                                    text: (wsBlock.modelData.pane_count || 0) === 1 ? I18n.trFor("duxHerdrFleet", "1 pane") : I18n.trFor("duxHerdrFleet", "%1 panes").arg(wsBlock.modelData.pane_count || 0)
                                                     font.pixelSize: 11
                                                     color: Theme.surfaceVariantText
                                                     opacity: 0.75

@@ -17,7 +17,7 @@ PluginSettings {
 
     StyledText {
         width: parent.width
-        text: "Supervisa agentes y spaces de herdr en tu máquina local, máquinas remotas por SSH (`herdr machine list`) y opcionalmente la nueva Herdr Desktop App (`hc` / `herdr-core`). Clic izquierdo abre el panel, clic derecho refresca, clic medio enfoca la ventana de herdr."
+        text: I18n.trFor("duxHerdrFleet", "Monitors herdr agents and workspaces across your local machine, remote SSH machines (`herdr machine list`), and optionally the Herdr Desktop App (`hc` / `herdr-core`). Left-click opens the popout, right-click refreshes, middle-click focuses the herdr window.")
         font.pixelSize: Theme.fontSizeSmall
         color: Theme.surfaceVariantText
         wrapMode: Text.WordWrap
@@ -25,46 +25,46 @@ PluginSettings {
 
     ToggleSetting {
         settingKey: "includeRemoteMachines"
-        label: "Monitorear máquinas remotas (SSH)"
-        description: "Consulta todas las máquinas habilitadas en `herdr machine list` mediante `herdr --machine <host> api snapshot`"
+        label: I18n.trFor("duxHerdrFleet", "Monitor remote machines (SSH)")
+        description: I18n.trFor("duxHerdrFleet", "Queries all enabled machines in `herdr machine list` via `herdr --machine <host> api snapshot`")
         defaultValue: true
     }
 
     ToggleSetting {
         settingKey: "includeHerdrCore"
-        label: "Incluir Herdr Desktop App (hc)"
-        description: "Consulta también `hc ls --json` (`herdr-core`) para mostrar las terminales de la app gráfica de escritorio"
+        label: I18n.trFor("duxHerdrFleet", "Include Herdr Desktop App (hc)")
+        description: I18n.trFor("duxHerdrFleet", "Queries `hc ls --json` (`herdr-core`) to include terminals from the graphical desktop app")
         defaultValue: true
     }
 
     ToggleSetting {
         settingKey: "includeEmptySpaces"
-        label: "Mostrar spaces sin agentes activos"
-        description: "Incluye en la lista los workspaces abiertos aunque no tengan un agente corriendo actualmente"
+        label: I18n.trFor("duxHerdrFleet", "Show spaces without active agents")
+        description: I18n.trFor("duxHerdrFleet", "Includes open workspaces in the tree even when they have no running agent")
         defaultValue: false
     }
 
     SelectionSetting {
         settingKey: "pillDisplayMode"
-        label: "Texto en la barra"
-        description: "Qué contador mostrar junto al ícono en la barra"
+        label: I18n.trFor("duxHerdrFleet", "Bar pill label")
+        description: I18n.trFor("duxHerdrFleet", "What counter to display next to the bar icon")
         options: [
-            { label: "Total de agentes (con alerta si hay activos)", value: "total" },
-            { label: "Desglose (bloqueados / trabajando / total)", value: "breakdown" },
-            { label: "Solo bloqueados + trabajando", value: "activeOnly" },
-            { label: "Solo ícono", value: "iconOnly" }
+            { label: I18n.trFor("duxHerdrFleet", "Total agents (highlighted when active)"), value: "total" },
+            { label: I18n.trFor("duxHerdrFleet", "Breakdown (blocked / working / total)"), value: "breakdown" },
+            { label: I18n.trFor("duxHerdrFleet", "Blocked + working only"), value: "activeOnly" },
+            { label: I18n.trFor("duxHerdrFleet", "Icon only"), value: "iconOnly" }
         ]
         defaultValue: "breakdown"
     }
 
     SliderSetting {
         settingKey: "refreshInterval"
-        label: "Intervalo de actualización"
-        description: "Con qué frecuencia consultar el estado de las máquinas (segundos)"
+        label: I18n.trFor("duxHerdrFleet", "Refresh interval")
+        description: I18n.trFor("duxHerdrFleet", "How often to poll machine snapshots (seconds)")
         defaultValue: 8
         minimum: 3
         maximum: 60
-        unit: "seg"
+        unit: I18n.trFor("duxHerdrFleet", "sec")
         leftIcon: "schedule"
     }
 }

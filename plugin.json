@@ -32,5 +32,6 @@
     "any"
   ],
   "requires_dms": ">=1.5.0",
+  "i18n": true,
   "screenshot": "https://raw.githubusercontent.com/arqueon/dux-herdr-fleet/main/assets/screenshot.png"
 }
