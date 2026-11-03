@@ -23,6 +23,7 @@ PluginComponent {
     readonly property string pluginDir: PluginService.getPluginPath("duxHerdrFleet")
     readonly property string collectorScript: pluginDir + "/collect-fleet"
     readonly property string focusScript: pluginDir + "/focus-target"
+    readonly property string herdrIconPath: pluginDir + "/assets/herdr-ram.svg"
 
     PluginGlobalVar {
         id: sharedFleet
@@ -380,10 +381,10 @@ PluginComponent {
                 id: hRow
                 spacing: Theme.spacingS
 
-                DankIcon {
-                    name: "smart_toy"
-                    color: root.barIconColor
-                    size: Theme.barIconSize(root.barThickness, -4)
+                DSVGIcon {
+                    source: root.herdrIconPath
+                    colorOverride: root.barIconColor
+                    size: Theme.barIconSize(root.barThickness, -Theme.spacingXS)
                     anchors.verticalCenter: parent.verticalCenter
                 }
 
@@ -418,10 +419,10 @@ PluginComponent {
                 id: vCol
                 spacing: Theme.spacingXS
 
-                DankIcon {
-                    name: "smart_toy"
-                    color: root.barIconColor
-                    size: Theme.barIconSize(root.barThickness, -4)
+                DSVGIcon {
+                    source: root.herdrIconPath
+                    colorOverride: root.barIconColor
+                    size: Theme.barIconSize(root.barThickness, -Theme.spacingXS)
                     anchors.horizontalCenter: parent.horizontalCenter
                 }
 
