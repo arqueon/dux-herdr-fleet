@@ -77,35 +77,60 @@ def get_configured_machines(include_remote: bool, timeout: float) -> list[dict[s
     if not include_remote:
         return machines
 
-    try:
-        res = subprocess.run(
-            ["herdr", "machine", "list"],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
+    # Prefer the machine-readable listing; fall back to the tab-separated text output.
+    profiles: list[dict[str, Any]] = []
+    listed = run_json_cmd(["herdr", "machine", "list", "--json"], timeout=timeout)
+    if isinstance(listed, list):
+        profiles = [p for p in listed if isinstance(p, dict)]
+    else:
+        try:
+            res = subprocess.run(
+                ["herdr", "machine", "list"],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+            if res.returncode == 0:
+                for raw in res.stdout.splitlines():
+                    parts = raw.strip().split("\t")
+                    if len(parts) >= 5:
+                        profiles.append(
+                            {
+                                "id": parts[0],
+                                "label": parts[1],
+                                "target": parts[2],
+                                "session": parts[3],
+                                "enabled": parts[4] == "enabled",
+                            }
+                        )
+        except Exception:
+            pass
+
+    for prof in profiles:
+        if not prof.get("enabled"):
+            continue
+        # `herdr --machine` accepts the label or the profile id; the label is what the
+        # TUI shows and what endpoints.json stores, so it is the canonical machine id here.
+        mid = str(prof.get("label") or prof.get("id") or "").strip()
+        target = str(prof.get("target") or "").strip()
+        session = str(prof.get("session") or "default").strip() or "default"
+        if not mid:
+            continue
+        canon_key = (target, session)
+        if canon_key in seen_targets:
+            continue
+        seen_targets.add(canon_key)
+        machines.append(
+            {
+                "id": mid,
+                "label": mid,
+                "short_label": mid,
+                "target": target,
+                "session": session,
+                "isLocal": False,
+            }
         )
-        if res.returncode == 0:
-            for raw in res.stdout.splitlines():
-                parts = raw.strip().split("\t")
-                if len(parts) >= 5 and parts[4] == "enabled":
-                    mid, target, session = parts[1], parts[2], parts[3] or "default"
-                    canon_key = (target, session)
-                    if canon_key in seen_targets:
-                        continue
-                    seen_targets.add(canon_key)
-                    machines.append(
-                        {
-                            "id": mid,
-                            "label": mid,
-                            "short_label": mid,
-                            "target": target,
-                            "session": session,
-                            "isLocal": False,
-                        }
-                    )
-    except Exception:
-        pass
     return machines
 
 
@@ -491,8 +516,18 @@ def fetch_hc_machines(
                     addr = str(term_entry.get("terminal") or "").strip()
                     if addr and "/" in addr and addr not in merged_terms:
                         missing_remote_addrs.append(addr)
+        # One `hc get` per remote terminal (~110 ms each): run them in parallel so the
+        # collector does not grow linearly with the number of remote panes.
+        details: dict[str, Any] = {}
+        if missing_remote_addrs:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(missing_remote_addrs))) as hc_pool:
+                for addr, t_detail in zip(
+                    missing_remote_addrs,
+                    hc_pool.map(lambda a: run_json_cmd(["hc", "get", a, "--json"], timeout=1.0), missing_remote_addrs),
+                ):
+                    details[addr] = t_detail
         for addr in missing_remote_addrs:
-            t_detail = run_json_cmd(["hc", "get", addr, "--json"], timeout=1.0)
+            t_detail = details.get(addr)
             if isinstance(t_detail, dict) and t_detail.get("address"):
                 st_obj = t_detail.get("status")
                 st_state = st_obj.get("state") if isinstance(st_obj, dict) else (st_obj if isinstance(st_obj, str) else None)

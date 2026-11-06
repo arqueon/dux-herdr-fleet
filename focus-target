@@ -12,6 +12,9 @@
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HERDR_SWITCHED_ENDPOINT=0
+HERDR_SWITCH_CONFIRMED=0
+HERDR_SWITCH_FAILED=0
 kind="${1:-window}"
 backend="${2:-herdr}"
 machine="${3:-local}"
@@ -50,9 +53,12 @@ ensure_runtime_env() {
     fi
 }
 
+# Focuses a Niri window and waits until it really holds keyboard focus (no layer-shell
+# surface such as the DMS popout still grabbing the keyboard). Returns 1 if focus could
+# not be verified, so callers never inject synthetic keys into some other window.
 wait_niri_window_focus() {
     local win_id="${1:-}"
-    [[ -n "$win_id" ]] || return 0
+    [[ -n "$win_id" ]] || return 1
     local i focused_id blocking_layers
     for i in {1..30}; do
         blocking_layers="$(
@@ -74,7 +80,7 @@ wait_niri_window_focus() {
         fi
         sleep 0.025
     done
-    sleep 0.08
+    return 1
 }
 
 focus_herdr_pane_rpc() {
@@ -126,12 +132,24 @@ if os.path.isfile(ep_path):
 PY
 }
 
+# Switches the active endpoint of the herdr TUI client by driving its Navigator (goto)
+# with a Wayland virtual keyboard. herdr 0.9.5 exposes no API or CLI to select the
+# client endpoint, so this is a best-effort UI automation with hard safety gates:
+#   * every key phase is sent only while Niri reports the herdr window focused and no
+#     layer-shell surface holds the keyboard;
+#   * the "Navigator opened" check adapts to the client's background output rate
+#     (a working agent alone writes hundreds of bytes per 300 ms);
+#   * on any failed gate it stops without pressing Enter or Escape.
+# Exit codes: 0 = switch confirmed via endpoint-selection.json, 2 = keys sent but
+# selection not confirmed, 1 = aborted before typing.
 switch_herdr_tui_endpoint() {
     local target_endpoint="${1:-}"
     local client_pids="${2:-}"
-    [[ -n "$target_endpoint" ]] || return 0
+    local win_id="${3:-}"
+    [[ -n "$target_endpoint" && -n "$win_id" ]] || return 1
+    [[ "${DUX_HERDR_ENDPOINT_SWITCH:-keyboard}" == "off" ]] && return 1
 
-    python3 - "$target_endpoint" "$client_pids" <<'PY' >/dev/null 2>&1 || true
+    python3 - "$target_endpoint" "$client_pids" "$win_id" <<'PY' >/dev/null 2>&1
 import ctypes
 import json
 import os
@@ -145,9 +163,51 @@ import time
 
 target_endpoint = (sys.argv[1] or "").strip().lower()
 client_pids_arg = (sys.argv[2] or "").strip()
+win_id = (sys.argv[3] or "").strip()
 query_text = re.sub(r"[^a-z0-9]+", " ", target_endpoint).strip()
-if not query_text or not os.environ.get("WAYLAND_DISPLAY"):
-    raise SystemExit(0)
+if not query_text or not win_id or not os.environ.get("WAYLAND_DISPLAY"):
+    raise SystemExit(1)
+
+
+def keyboard_target_ok():
+    """True only if Niri reports the herdr window focused and no layer surface grabs the keyboard."""
+    try:
+        fw = json.loads(
+            subprocess.check_output(["niri", "msg", "-j", "focused-window"], text=True, timeout=1.0) or "null"
+        )
+        if not isinstance(fw, dict) or str(fw.get("id")) != win_id:
+            return False
+        layers = json.loads(
+            subprocess.check_output(["niri", "msg", "-j", "layers"], text=True, timeout=1.0) or "[]"
+        )
+        for layer in layers or []:
+            ki = str(layer.get("keyboard_interactivity") or "None").lower()
+            ns = str(layer.get("namespace") or "")
+            if ki == "exclusive" or (ns.startswith("dms:") and ki != "none"):
+                return False
+        return True
+    except Exception:
+        return False
+
+
+def selected_endpoint_label():
+    base = os.path.expanduser("~/.local/state/herdr/client")
+    try:
+        with open(os.path.join(base, "endpoint-selection.json"), "r", encoding="utf-8") as fh:
+            prof_id = (json.load(fh) or {}).get("selected_profile")
+        if not prof_id:
+            return "local"
+        with open(os.path.join(base, "endpoints.json"), "r", encoding="utf-8") as fh:
+            for item in (json.load(fh) or {}).get("ssh") or []:
+                if isinstance(item, dict) and item.get("id") == prof_id:
+                    return str(item.get("label") or "").strip().lower()
+    except Exception:
+        pass
+    return ""
+
+
+if not keyboard_target_ok():
+    raise SystemExit(1)
 
 client_pids = [p for p in client_pids_arg.split() if p.isdigit()]
 if not client_pids:
@@ -346,8 +406,8 @@ CHAR_MAP = {
 
 def wait_wchar_delta(w_before, min_delta, timeout_s=0.30):
     if not client_pids:
-        time.sleep(0.05)
-        return True
+        # Without a client PID there is no evidence the overlay opened: fail safe.
+        return False
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         if (total_client_wchar() - w_before) >= min_delta:
@@ -392,53 +452,80 @@ prefix_chord, goto_chords = load_goto_bindings()
 direct_chords = [c for c in goto_chords if not c.startswith("prefix+")]
 prefix_suffixes = [c.split("+", 1)[1] for c in goto_chords if c.startswith("prefix+") and "+" in c]
 
+# Background output of the client (a working agent's spinner alone is ~400 B / 300 ms).
+# The Navigator overlay must produce a redraw clearly above that noise floor.
+OPEN_WINDOW_S = 0.30
+noise_before = 0
+if client_pids:
+    _w0 = total_client_wchar()
+    time.sleep(OPEN_WINDOW_S)
+    noise_before = total_client_wchar() - _w0
+open_threshold = max(400, int(noise_before * 2.5) + 400)
+
+
+def abort(code=1):
+    s.close()
+    raise SystemExit(code)
+
+
 opened_navigator = False
 for dc in direct_chords:
+    if not keyboard_target_ok():
+        abort()
     w_before = total_client_wchar()
     send_chord(dc)
-    if wait_wchar_delta(w_before, 150, 0.30):
+    if wait_wchar_delta(w_before, open_threshold, OPEN_WINDOW_S):
         opened_navigator = True
         break
 
 if not opened_navigator and prefix_suffixes:
     for suf in prefix_suffixes:
+        if not keyboard_target_ok():
+            abort()
         w_before = total_client_wchar()
         send_chord(prefix_chord)
         time.sleep(0.03)
         send_chord(suf)
-        if wait_wchar_delta(w_before, 150, 0.30):
+        if wait_wchar_delta(w_before, open_threshold, OPEN_WINDOW_S):
             opened_navigator = True
             break
 
+# Never press Escape on failure: if the overlay did not open, ESC would reach the agent's PTY.
 if not opened_navigator:
-    s.close()
-    raise SystemExit(0)
+    abort()
 
 time.sleep(0.015)
 
-# 2. Focus search bar inside Navigator overlay ('/') and verify redraw before typing query
-w_before_slash = total_client_wchar()
+# 2. Focus the Navigator search field ('/'), then type the endpoint query.
+if not keyboard_target_ok():
+    abort(2)
 tap(KEY_SLASH, 0.008)
-if not wait_wchar_delta(w_before_slash, 10, 0.20):
-    s.close()
-    raise SystemExit(0)
+time.sleep(0.03)
 
-time.sleep(0.01)
-
-# 3. Type normalized endpoint query ("local" or profile label), clamp selection to index 0 (Endpoint row), and press Enter
 for ch in query_text:
     kc = CHAR_MAP.get(ch)
     if kc is not None:
         tap(kc, 0.004)
 
+# 3. Clamp the selection to the first row (the endpoint row) and confirm.
 time.sleep(0.015)
 for _ in range(4):
     tap(KEY_UP, 0.003)
 
 time.sleep(0.015)
+if not keyboard_target_ok():
+    abort(2)
 tap(KEY_ENTER, 0.008)
 time.sleep(0.04)
 s.close()
+
+# 4. Confirm the switch through the client's persisted endpoint selection.
+deadline = time.monotonic() + 2.5
+while time.monotonic() < deadline:
+    if selected_endpoint_label() == target_endpoint:
+        raise SystemExit(0)
+    time.sleep(0.05)
+raise SystemExit(2)
 PY
 }
 
@@ -526,27 +613,37 @@ focus_niri_herdr_window() {
     fi
 
     if [[ -n "$win_id" ]]; then
-        wait_niri_window_focus "$win_id"
+        local focused_ok=0
+        wait_niri_window_focus "$win_id" && focused_ok=1
         if [[ "$allow_switch" == "1" ]]; then
-            local win_host=""
+            local win_host="" needs_switch=0
             if [[ "$win_title" == *": "* ]]; then
                 win_host="${win_title%%: *}"
             fi
             if [[ -n "$win_host" ]]; then
-                if ! endpoint_matches_win_host "$desired_endpoint" "$win_host" "$local_host"; then
-                    switch_herdr_tui_endpoint "$desired_endpoint" "$client_pids"
-                    HERDR_SWITCHED_ENDPOINT=1
-                fi
+                endpoint_matches_win_host "$desired_endpoint" "$win_host" "$local_host" || needs_switch=1
             else
                 local active_endpoint
                 active_endpoint="$(current_herdr_tui_endpoint)"
                 if [[ -n "$active_endpoint" && "${active_endpoint,,}" != "${desired_endpoint,,}" ]]; then
-                    switch_herdr_tui_endpoint "$desired_endpoint" "$client_pids"
-                    HERDR_SWITCHED_ENDPOINT=1
+                    needs_switch=1
                 fi
             fi
 
-            if [[ "$HERDR_SWITCHED_ENDPOINT" == "1" ]]; then
+            if [[ "$needs_switch" == "1" ]]; then
+                local switch_rc=1
+                if [[ "$focused_ok" == "1" ]]; then
+                    switch_herdr_tui_endpoint "$desired_endpoint" "$client_pids" "$win_id"
+                    switch_rc=$?
+                fi
+                case "$switch_rc" in
+                    0) HERDR_SWITCHED_ENDPOINT=1; HERDR_SWITCH_CONFIRMED=1 ;;
+                    2) HERDR_SWITCHED_ENDPOINT=1 ;;
+                    *) HERDR_SWITCH_FAILED=1 ;;
+                esac
+            fi
+
+            if [[ "$HERDR_SWITCHED_ENDPOINT" == "1" && "$HERDR_SWITCH_CONFIRMED" != "1" ]]; then
                 local poll_i cur_title cur_host
                 for poll_i in {1..15}; do
                     cur_title="$(
@@ -725,17 +822,18 @@ for m in machines:
                 )
 
 if best_agent and best_agent_score >= 45:
-    print("\t".join(["agent", *best_agent]))
+    print("\x1f".join(["agent", *best_agent]))
 elif best_ws and best_ws_score >= 40:
-    print("\t".join(["workspace", *best_ws]))
+    print("\x1f".join(["workspace", *best_ws]))
 else:
-    print("window\therdr\tlocal")
+    print("window\x1fherdr\x1flocal")
 PY
     )"
 
     if [[ -n "$resolved" ]]; then
         local r_kind r_backend r_machine r_target r_ws r_tab r_ws_label
-        IFS=$'\t' read -r r_kind r_backend r_machine r_target r_ws r_tab r_ws_label <<<"$resolved"
+        # \x1f (not tab): IFS whitespace would collapse empty fields and shift the tab/label.
+        IFS=$'\x1f' read -r r_kind r_backend r_machine r_target r_ws r_tab r_ws_label <<<"$resolved"
         if [[ "$r_kind" == "agent" && -n "$r_target" ]]; then
             exec "$0" agent "$r_backend" "$r_machine" "$r_target" "${r_ws:-}" "${r_tab:-}" "${r_ws_label:-}"
         elif [[ "$r_kind" == "workspace" && -n "$r_target" ]]; then
@@ -757,7 +855,7 @@ if [[ "$kind" == "reemit-notification" ]]; then
         timeout 120 notify-send \
             --expire-time=15000 \
             --app-name="Herdr" \
-            --icon="smart_toy" \
+            --icon="utilities-terminal" \
             --hint="boolean:suppress-sound:true" \
             --action="default=Open" \
             -- "$notif_summary" "$notif_body" 2>/dev/null || true
@@ -867,10 +965,20 @@ focus_herdr_target_on_server() {
 }
 
 HERDR_SWITCHED_ENDPOINT=0
+HERDR_SWITCH_CONFIRMED=0
+HERDR_SWITCH_FAILED=0
 focus_niri_herdr_window "$machine" "$workspace_label" "1"
 if [[ "$HERDR_SWITCHED_ENDPOINT" == "1" ]]; then
+    # Give the client a moment to attach to the newly selected endpoint.
     sleep 0.15
 fi
 focus_herdr_target_on_server
+if [[ "$HERDR_SWITCH_FAILED" == "1" ]] && command -v notify-send >/dev/null 2>&1; then
+    # Server-side focus was applied; the client just needs the user to pick the machine.
+    notify-send --app-name="Dux Herdr Fleet" --icon=utilities-terminal --expire-time=6000 \
+        "herdr: switch to ${machine}" \
+        "The pane is focused on ${machine}. Select that machine in herdr (workspace picker or sidebar) to see it." \
+        >/dev/null 2>&1 || true
+fi
 
 exit 0

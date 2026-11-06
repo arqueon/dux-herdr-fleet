@@ -109,5 +109,7 @@
   },
   "sec": {
     "sec": "seg"
-  }
+  },
+  "Background remote refresh": "Actualización remota en segundo plano",
+  "How often remote SSH machines are polled while the popout is closed, so the bar notices blocked agents elsewhere (0 = only while the popout is open)": "Cada cuánto se consultan las máquinas SSH remotas con el popout cerrado, para que la barra detecte agentes bloqueados en otras máquinas (0 = solo con el popout abierto)"
 }

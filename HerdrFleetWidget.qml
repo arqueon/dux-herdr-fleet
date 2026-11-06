@@ -17,6 +17,9 @@ PluginComponent {
     readonly property bool includeEmptySpaces: pluginData.includeEmptySpaces ?? false
     readonly property string pillDisplayMode: pluginData.pillDisplayMode || "breakdown"
     readonly property int baseIntervalMs: Math.max(10, (pluginData.refreshInterval || 15)) * 1000
+    // Remote SSH machines are also polled in the background at this slower cadence so the
+    // bar pill notices a blocked agent on another machine. 0 = only while the popout is open.
+    readonly property int remoteIntervalMs: Math.max(0, (pluginData.remoteRefreshInterval ?? 60)) * 1000
     readonly property int maxIntervalMs: 120000
     readonly property int maxBackoffSteps: 3
 
@@ -42,6 +45,11 @@ PluginComponent {
     PluginGlobalVar {
         id: sharedLastPoll
         varName: "lastPollMs"
+        defaultValue: 0
+    }
+    PluginGlobalVar {
+        id: sharedLastRemotePoll
+        varName: "lastRemotePollMs"
         defaultValue: 0
     }
     PluginGlobalVar {
@@ -242,6 +250,29 @@ PluginComponent {
         return out;
     }
 
+    // Status pill counts follow the machine filter and the search query (not the status
+    // filter itself), so a pill never advertises agents the tree below cannot show.
+    readonly property var scopedStatusCounts: {
+        var counts = { blocked: 0, working: 0, idle: 0, done: 0, unknown: 0, total: 0 };
+        var q = root.searchQuery;
+        var mList = root.visibleMachines || [];
+        for (var i = 0; i < mList.length; i++) {
+            var wsList = (mList[i] && mList[i].workspaces) || [];
+            for (var j = 0; j < wsList.length; j++) {
+                var agList = wsList[j].agents || [];
+                for (var k = 0; k < agList.length; k++) {
+                    var ag = agList[k];
+                    if (q && !root.agentMatchesSearch(ag, mList[i], wsList[j], q))
+                        continue;
+                    var st = counts[ag.agent_status] !== undefined ? ag.agent_status : "unknown";
+                    counts[st] += 1;
+                    counts.total += 1;
+                }
+            }
+        }
+        return counts;
+    }
+
     readonly property var firstMatchingAgent: {
         var mList = root.visibleMachines || [];
         for (var i = 0; i < mList.length; i++) {
@@ -391,6 +422,8 @@ PluginComponent {
         }
         var queryRemote = (pollRemote === undefined ? root.isPopoutOpen() : pollRemote) && root.includeRemoteMachines;
         root.lastPollIncludedRemote = queryRemote;
+        if (queryRemote)
+            sharedLastRemotePoll.set(Date.now());
         sharedRefreshing.set(true);
         collectorProc.command = [
             "python3",
@@ -410,7 +443,8 @@ PluginComponent {
         if (!isInitialScan && now - sharedLastPoll.value < root.currentIntervalMs - 500)
             return;
         sharedLastPoll.set(now);
-        root.runCollector(isInitialScan || root.isPopoutOpen());
+        var remoteDue = root.remoteIntervalMs > 0 && now - sharedLastRemotePoll.value >= root.remoteIntervalMs - 500;
+        root.runCollector(isInitialScan || root.isPopoutOpen() || remoteDue);
     }
 
     function refreshNow() {
@@ -505,6 +539,13 @@ PluginComponent {
         if (toReemit.length === 0)
             return;
 
+        var seenKeys = Object.keys(seen);
+        if (seenKeys.length > 200) {
+            var pruned = {};
+            for (var p = seenKeys.length - 200; p < seenKeys.length; p++)
+                pruned[seenKeys[p]] = true;
+            seen = pruned;
+        }
         sharedInterceptedNotifs.set(seen);
         Qt.callLater(() => {
             try {
@@ -704,7 +745,7 @@ PluginComponent {
                             id: statusPill
                             required property string modelData
                             readonly property bool isSelected: root.selectedStatus === modelData
-                            readonly property int statusCount: root.totals[modelData] || 0
+                            readonly property int statusCount: root.scopedStatusCounts[modelData] || 0
                             readonly property color accentColor: root.statusColor(modelData)
 
                             height: statusPillRow.implicitHeight + Theme.spacingXS * 2

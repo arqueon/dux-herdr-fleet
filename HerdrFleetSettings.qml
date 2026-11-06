@@ -58,6 +58,17 @@ PluginSettings {
     }
 
     SliderSetting {
+        settingKey: "remoteRefreshInterval"
+        label: I18n.trFor("duxHerdrFleet", "Background remote refresh")
+        description: I18n.trFor("duxHerdrFleet", "How often remote SSH machines are polled while the popout is closed, so the bar notices blocked agents elsewhere (0 = only while the popout is open)")
+        defaultValue: 60
+        minimum: 0
+        maximum: 600
+        unit: I18n.trFor("duxHerdrFleet", "sec")
+        leftIcon: "cloud_sync"
+    }
+
+    SliderSetting {
         settingKey: "refreshInterval"
         label: I18n.trFor("duxHerdrFleet", "Refresh interval")
         description: I18n.trFor("duxHerdrFleet", "How often to poll machine snapshots (seconds)")
