@@ -142,12 +142,11 @@ PY
 #   * on any failed gate it stops without pressing Enter or Escape.
 # Exit codes: 0 = switch confirmed via endpoint-selection.json, 2 = keys sent but
 # selection not confirmed, 1 = aborted before typing.
-switch_herdr_tui_endpoint() {
+switch_via_virtual_keyboard() {
     local target_endpoint="${1:-}"
     local client_pids="${2:-}"
     local win_id="${3:-}"
     [[ -n "$target_endpoint" && -n "$win_id" ]] || return 1
-    [[ "${DUX_HERDR_ENDPOINT_SWITCH:-keyboard}" == "off" ]] && return 1
 
     python3 - "$target_endpoint" "$client_pids" "$win_id" <<'PY' >/dev/null 2>&1
 import ctypes
@@ -527,6 +526,200 @@ while time.monotonic() < deadline:
     time.sleep(0.05)
 raise SystemExit(2)
 PY
+}
+
+# Preferred path: kitty remote control. Keys go only to the kitty window that runs the
+# herdr client (never to whatever app has compositor focus), and every step is verified
+# by reading that window's screen with `kitten @ get-text`. Needs `allow_remote_control`
+# and `listen_on` in kitty.conf; the socket is discovered from the client's environment.
+# Exit codes: 0 = confirmed, 2 = keys sent but not confirmed, 1 = aborted, 3 = unavailable.
+switch_via_kitty() {
+    local target_endpoint="${1:-}"
+    local client_pids="${2:-}"
+    local win_id="${3:-}"
+    [[ -n "$target_endpoint" ]] || return 1
+    command -v kitten >/dev/null 2>&1 || return 3
+
+    python3 - "$target_endpoint" "$client_pids" "$win_id" <<'PY' >/dev/null 2>&1
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+target_endpoint = (sys.argv[1] or "").strip().lower()
+client_pids = [p for p in (sys.argv[2] or "").split() if p.isdigit()]
+win_id = (sys.argv[3] or "").strip()
+query_text = re.sub(r"[^a-z0-9]+", " ", target_endpoint).strip()
+if not query_text:
+    raise SystemExit(1)
+
+win_pid = ""
+if win_id:
+    try:
+        for w in json.loads(subprocess.check_output(["niri", "msg", "-j", "windows"], text=True, timeout=1.0)):
+            if str(w.get("id")) == win_id:
+                win_pid = str(w.get("pid") or "")
+                break
+    except Exception:
+        pass
+
+
+def proc_env(pid):
+    try:
+        with open(f"/proc/{pid}/environ", "rb") as fh:
+            items = fh.read().split(b"\0")
+        return dict(i.decode("utf-8", "replace").split("=", 1) for i in items if b"=" in i)
+    except Exception:
+        return {}
+
+
+listen_on = kitty_window = ""
+for pid in client_pids:
+    env = proc_env(pid)
+    if not env.get("KITTY_LISTEN_ON") or not env.get("KITTY_WINDOW_ID"):
+        continue
+    if win_pid and env.get("KITTY_PID") and env["KITTY_PID"] != win_pid:
+        continue
+    listen_on, kitty_window = env["KITTY_LISTEN_ON"], env["KITTY_WINDOW_ID"]
+    break
+if not listen_on:
+    raise SystemExit(3)
+
+base = ["kitten", "@", "--to", listen_on]
+match = ["--match", f"id:{kitty_window}"]
+
+
+def kit(*args, timeout=1.5):
+    return subprocess.run(base + list(args), capture_output=True, text=True, timeout=timeout, check=False)
+
+
+def screen():
+    res = kit("get-text", *match)
+    return res.stdout.splitlines() if res.returncode == 0 else None
+
+
+def changed_lines(a, b):
+    n = max(len(a), len(b))
+    a = a + [""] * (n - len(a))
+    b = b + [""] * (n - len(b))
+    return sum(1 for x, y in zip(a, b) if x != y)
+
+
+def wait_for(pred, timeout_s):
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        cur = screen()
+        if cur is not None and pred(cur):
+            return cur
+        time.sleep(0.04)
+    return None
+
+
+before = screen()
+if before is None:
+    raise SystemExit(3)
+
+# A streaming agent also changes screen rows, which would look like the overlay opening.
+# Only proceed from a quiet screen so a change can be attributed to the Navigator.
+time.sleep(0.15)
+again = screen()
+if again is None or changed_lines(before, again) > 0:
+    raise SystemExit(1)
+
+# Text that only the Navigator overlay shows (set after calibration). When present it is
+# required in addition to the row-change heuristic.
+navigator_marker = os.environ.get("DUX_HERDR_NAVIGATOR_MARKER", "").strip().lower()
+
+
+def load_goto_chords():
+    prefix, chords = "ctrl+space", ["prefix+g", "alt+g"]
+    try:
+        with open(os.path.expanduser("~/.config/herdr/config.toml"), "r", encoding="utf-8") as fh:
+            content = fh.read()
+        m = re.search(r'(?m)^\s*prefix\s*=\s*"([^"]+)"', content)
+        if m:
+            prefix = m.group(1).strip().lower()
+        m = re.search(r"(?m)^\s*goto\s*=\s*\[([^\]]+)\]", content)
+        if m:
+            parsed = [x.strip().strip('"').strip("'").lower() for x in m.group(1).split(",") if x.strip()]
+            chords = parsed or chords
+    except Exception:
+        pass
+    seqs = [[c] for c in chords if not c.startswith("prefix+")]
+    seqs += [[prefix, c.split("+", 1)[1]] for c in chords if c.startswith("prefix+")]
+    return seqs
+
+
+# 1. Open the Navigator: it is an overlay, so several screen rows must change.
+opened = None
+for seq in load_goto_chords():
+    kit("send-key", *match, *seq)
+    opened = wait_for(
+        lambda cur: changed_lines(before, cur) >= 3
+        and (not navigator_marker or any(navigator_marker in line.lower() for line in cur)),
+        0.8,
+    )
+    if opened:
+        break
+if not opened:
+    raise SystemExit(1)  # nothing typed; never send Escape (it would reach the agent)
+
+# 2. Search for the endpoint and require the query to show up on screen.
+had_query = sum(1 for line in opened if query_text in line.lower())
+kit("send-text", *match, "/" + query_text)
+typed = wait_for(lambda cur: sum(1 for line in cur if query_text in line.lower()) > had_query, 0.8)
+if not typed:
+    raise SystemExit(2)
+
+# 3. Clamp to the first row (the endpoint row) and confirm.
+kit("send-key", *match, "up", "up", "up", "up")
+time.sleep(0.05)
+kit("send-key", *match, "enter")
+
+
+def selected_endpoint_label():
+    base_dir = os.path.expanduser("~/.local/state/herdr/client")
+    try:
+        with open(os.path.join(base_dir, "endpoint-selection.json"), "r", encoding="utf-8") as fh:
+            prof_id = (json.load(fh) or {}).get("selected_profile")
+        if not prof_id:
+            return "local"
+        with open(os.path.join(base_dir, "endpoints.json"), "r", encoding="utf-8") as fh:
+            for item in (json.load(fh) or {}).get("ssh") or []:
+                if isinstance(item, dict) and item.get("id") == prof_id:
+                    return str(item.get("label") or "").strip().lower()
+    except Exception:
+        pass
+    return ""
+
+
+deadline = time.monotonic() + 2.5
+while time.monotonic() < deadline:
+    if selected_endpoint_label() == target_endpoint:
+        raise SystemExit(0)
+    time.sleep(0.05)
+raise SystemExit(2)
+PY
+}
+
+# Mode (DUX_HERDR_ENDPOINT_SWITCH): auto = kitty if available, else virtual keyboard;
+# kitty = kitty only; keyboard = virtual keyboard only; off = never inject keys.
+switch_herdr_tui_endpoint() {
+    local mode="${DUX_HERDR_ENDPOINT_SWITCH:-auto}" rc
+    case "$mode" in
+        off) return 1 ;;
+        keyboard) switch_via_virtual_keyboard "$@"; return $? ;;
+    esac
+    switch_via_kitty "$@"
+    rc=$?
+    if [[ "$rc" == "3" ]]; then
+        [[ "$mode" == "kitty" ]] && return 1
+        switch_via_virtual_keyboard "$@"
+        return $?
+    fi
+    return "$rc"
 }
 
 endpoint_matches_win_host() {

@@ -34,7 +34,7 @@ PluginSettings {
         settingKey: "includeHerdrCore"
         label: I18n.trFor("duxHerdrFleet", "Include Herdr Desktop App (hc)")
         description: I18n.trFor("duxHerdrFleet", "Queries `herdr-app ls`, `herdr-core` state, and `hc ls --json` across local and remote `hc` machines")
-        defaultValue: true
+        defaultValue: false
     }
 
     ToggleSetting {
@@ -42,6 +42,26 @@ PluginSettings {
         label: I18n.trFor("duxHerdrFleet", "Show spaces without active agents")
         description: I18n.trFor("duxHerdrFleet", "Includes open workspaces in the tree even when they have no running agent")
         defaultValue: false
+    }
+
+    SelectionSetting {
+        settingKey: "endpointSwitchMode"
+        label: I18n.trFor("duxHerdrFleet", "Cross-machine switching")
+        description: I18n.trFor("duxHerdrFleet", "herdr has no API to change the machine shown by its window, so switching drives its Navigator. Kitty remote control (listen_on) is verified on screen; the virtual keyboard is a guarded fallback. Off only focuses the pane on its server and notifies you.")
+        options: [
+            { label: I18n.trFor("duxHerdrFleet", "Automatic (kitty, else virtual keyboard)"), value: "auto" },
+            { label: I18n.trFor("duxHerdrFleet", "Kitty remote control only"), value: "kitty" },
+            { label: I18n.trFor("duxHerdrFleet", "Virtual keyboard only"), value: "keyboard" },
+            { label: I18n.trFor("duxHerdrFleet", "Off (focus on server + notification)"), value: "off" }
+        ]
+        defaultValue: "auto"
+    }
+
+    ToggleSetting {
+        settingKey: "interceptNotifications"
+        label: I18n.trFor("duxHerdrFleet", "Clickable herdr notifications")
+        description: I18n.trFor("duxHerdrFleet", "Replaces herdr notifications with copies that jump to the originating pane when clicked")
+        defaultValue: true
     }
 
     SelectionSetting {

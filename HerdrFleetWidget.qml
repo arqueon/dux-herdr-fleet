@@ -13,8 +13,12 @@ PluginComponent {
     property var popoutService: null
 
     readonly property bool includeRemoteMachines: pluginData.includeRemoteMachines ?? true
-    readonly property bool includeHerdrCore: pluginData.includeHerdrCore ?? true
+    readonly property bool includeHerdrCore: pluginData.includeHerdrCore ?? false
     readonly property bool includeEmptySpaces: pluginData.includeEmptySpaces ?? false
+    // How focus-target switches the herdr TUI client to another machine (no herdr API exists):
+    // auto = kitty remote control if available, else virtual keyboard; off = never inject keys.
+    readonly property string endpointSwitchMode: pluginData.endpointSwitchMode || "auto"
+    readonly property bool interceptNotifications: pluginData.interceptNotifications ?? true
     readonly property string pillDisplayMode: pluginData.pillDisplayMode || "breakdown"
     readonly property int baseIntervalMs: Math.max(10, (pluginData.refreshInterval || 15)) * 1000
     // Remote SSH machines are also polled in the background at this slower cadence so the
@@ -467,6 +471,7 @@ PluginComponent {
             return;
         root.closePopoutImmediately();
         Quickshell.execDetached([
+            "env", "DUX_HERDR_ENDPOINT_SWITCH=" + root.endpointSwitchMode,
             "bash",
             root.focusScript,
             "agent",
@@ -487,6 +492,7 @@ PluginComponent {
         var firstPane = agList.length > 0 ? (agList[0].pane_id || "") : "";
         root.closePopoutImmediately();
         Quickshell.execDetached([
+            "env", "DUX_HERDR_ENDPOINT_SWITCH=" + root.endpointSwitchMode,
             "bash",
             root.focusScript,
             "workspace",
@@ -507,7 +513,7 @@ PluginComponent {
     }
 
     function interceptHerdrNotifications() {
-        if (!root.pluginDir || typeof NotificationService === "undefined" || !NotificationService)
+        if (!root.interceptNotifications || !root.pluginDir || typeof NotificationService === "undefined" || !NotificationService)
             return;
         var roots = Local.HerdrFleetController.liveRoots || [];
         if (roots.length > 0 && roots[0] !== root)
@@ -561,6 +567,7 @@ PluginComponent {
                         item.wrapper.notification.dismiss();
                 } catch (e) {}
                 Quickshell.execDetached([
+                    "env", "DUX_HERDR_ENDPOINT_SWITCH=" + root.endpointSwitchMode,
                     "bash",
                     root.focusScript,
                     "reemit-notification",
