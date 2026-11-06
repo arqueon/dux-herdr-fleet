@@ -814,10 +814,11 @@ finish(2, f"Enter sent but selection is still '{selected_endpoint_label()}'")
 PY
 }
 
-# Mode (DUX_HERDR_ENDPOINT_SWITCH): auto = kitty if available, else virtual keyboard;
-# kitty = kitty only; keyboard = virtual keyboard only; off = never inject keys.
+# Mode (DUX_HERDR_ENDPOINT_SWITCH): kitty (default) = kitty remote control only;
+# auto = kitty if available, else the Wayland virtual keyboard (opt-in);
+# keyboard = virtual keyboard only; off = never send keys.
 switch_herdr_tui_endpoint() {
-    local mode="${DUX_HERDR_ENDPOINT_SWITCH:-auto}" rc
+    local mode="${DUX_HERDR_ENDPOINT_SWITCH:-kitty}" rc
     flog "switch to '$1' mode=$mode"
     case "$mode" in
         off) flog "switch disabled"; return 1 ;;
@@ -1159,14 +1160,16 @@ ensure_runtime_env
 if [[ "$kind" == "reemit-notification" ]]; then
     notif_summary="${2:-}"
     notif_body="${3:-}"
-    command -v notify-send >/dev/null 2>&1 || exit 0
+    command -v dms >/dev/null 2>&1 || exit 0
+    # Posted as "Dux Herdr Fleet" (not "herdr"), so DMS does not deduplicate it against
+    # the original and the widget does not intercept it again. -A waits for the click.
     action="$(
-        timeout 120 notify-send \
-            --expire-time=15000 \
-            --app-name="Herdr" \
-            --icon="utilities-terminal" \
-            --hint="boolean:suppress-sound:true" \
-            --action="default=Open" \
+        timeout 120 dms notify \
+            --expire-time 15000 \
+            --app-name "Dux Herdr Fleet" \
+            --icon utilities-terminal \
+            --hint boolean:suppress-sound:true \
+            --action default=Open \
             -- "$notif_summary" "$notif_body" 2>/dev/null || true
     )"
     if [[ "$action" == "default" ]]; then
@@ -1283,9 +1286,9 @@ if [[ "$HERDR_SWITCHED_ENDPOINT" == "1" ]]; then
 fi
 focus_herdr_target_on_server
 flog "done kind=$kind machine=$machine target=$target_id switched=$HERDR_SWITCHED_ENDPOINT confirmed=$HERDR_SWITCH_CONFIRMED failed=$HERDR_SWITCH_FAILED"
-if [[ "$HERDR_SWITCH_FAILED" == "1" ]] && command -v notify-send >/dev/null 2>&1; then
+if [[ "$HERDR_SWITCH_FAILED" == "1" ]] && command -v dms >/dev/null 2>&1; then
     # Server-side focus was applied; the client just needs the user to pick the machine.
-    notify-send --app-name="Dux Herdr Fleet" --icon=utilities-terminal --expire-time=6000 \
+    dms notify --app-name "Dux Herdr Fleet" --icon utilities-terminal --expire-time 6000 -- \
         "herdr: switch to ${machine}" \
         "The pane is focused on ${machine}. Select that machine in herdr (workspace picker or sidebar) to see it." \
         >/dev/null 2>&1 || true

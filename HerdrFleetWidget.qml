@@ -16,8 +16,9 @@ PluginComponent {
     readonly property bool includeHerdrCore: pluginData.includeHerdrCore ?? false
     readonly property bool includeEmptySpaces: pluginData.includeEmptySpaces ?? false
     // How focus-target switches the herdr TUI client to another machine (no herdr API exists):
-    // auto = kitty remote control if available, else virtual keyboard; off = never inject keys.
-    readonly property string endpointSwitchMode: pluginData.endpointSwitchMode || "auto"
+    // kitty (default) = kitty remote control, verified on screen; auto = kitty, else a Wayland
+    // virtual keyboard (opt-in); keyboard = virtual keyboard only; off = never send keys.
+    readonly property string endpointSwitchMode: pluginData.endpointSwitchMode || "kitty"
     readonly property bool interceptNotifications: pluginData.interceptNotifications ?? true
     readonly property string pillDisplayMode: pluginData.pillDisplayMode || "breakdown"
     readonly property int baseIntervalMs: Math.max(10, (pluginData.refreshInterval || 15)) * 1000
@@ -554,10 +555,8 @@ PluginComponent {
         }
         sharedInterceptedNotifs.set(seen);
         Qt.callLater(() => {
-            try {
-                if (NotificationService._recentDedupKeys !== undefined)
-                    NotificationService._recentDedupKeys = [];
-            } catch (e) {}
+            // The copy is posted under its own app name ("Dux Herdr Fleet"), so DMS's
+            // burst deduplication does not treat it as the herdr original.
             for (var j = 0; j < toReemit.length; j++) {
                 var item = toReemit[j];
                 try {
@@ -807,98 +806,21 @@ PluginComponent {
                     width: parent.width
                     spacing: Theme.spacingXS
 
-                    StyledRect {
-                        id: searchBarRect
+                    DSearchField {
+                        id: searchInput
                         width: Math.max(Theme.spacingXL * 3, parent.width - hcChip.width - refreshBtn.width - Theme.spacingXS * 2)
-                        height: Theme.listItemHeight - Theme.spacingS
-                        radius: Theme.cornerRadius
-                        color: Theme.surfaceContainer
-                        border.width: Theme.outlineWidth
-                        border.color: searchInput.activeFocus ? Theme.primary : "transparent"
-
-                        DankIcon {
-                            id: searchBarIcon
-                            name: "search"
-                            size: Theme.iconSizeSmall
-                            color: searchInput.activeFocus ? Theme.primary : Theme.surfaceVariantText
-                            anchors.left: parent.left
-                            anchors.leftMargin: Theme.spacingS
-                            anchors.verticalCenter: parent.verticalCenter
+                        placeholderText: I18n.trFor("duxHerdrFleet", "Search agents, spaces, machines, cwd…")
+                        text: sharedSearchQuery.value || ""
+                        onTextChanged: {
+                            if ((sharedSearchQuery.value || "") !== text)
+                                sharedSearchQuery.set(text);
                         }
-
-                        Item {
-                            anchors.left: searchBarIcon.right
-                            anchors.leftMargin: Theme.spacingXS
-                            anchors.right: clearSearchBtn.visible ? clearSearchBtn.left : parent.right
-                            anchors.rightMargin: Theme.spacingS
-                            anchors.top: parent.top
-                            anchors.bottom: parent.bottom
-
-                            StyledText {
-                                visible: searchInput.text.length === 0
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.verticalCenter: parent.verticalCenter
-                                elide: Text.ElideRight
-                                text: I18n.trFor("duxHerdrFleet", "Search agents, spaces, machines, cwd…")
-                                color: Theme.surfaceVariantText
-                                font.pixelSize: Theme.fontSizeSmall
-                            }
-
-                            TextInput {
-                                id: searchInput
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.verticalCenter: parent.verticalCenter
-                                clip: true
-                                selectByMouse: true
-                                color: Theme.surfaceText
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSizeSmall
-                                text: sharedSearchQuery.value || ""
-                                onTextChanged: {
-                                    if ((sharedSearchQuery.value || "") !== text)
-                                        sharedSearchQuery.set(text);
-                                }
-                                onAccepted: {
-                                    if (root.firstMatchingAgent) {
-                                        searchInput.focus = false;
-                                        if (popout.parentPopout)
-                                            root.fleetPopout = popout.parentPopout;
-                                        root.focusAgent(root.firstMatchingAgent);
-                                    }
-                                }
-                            }
-                        }
-
-                        StyledRect {
-                            id: clearSearchBtn
-                            visible: searchInput.text.length > 0
-                            width: Theme.iconSizeSmall + Theme.spacingS
-                            height: Theme.iconSizeSmall + Theme.spacingS
-                            radius: Theme.cornerRadiusFull
-                            anchors.right: parent.right
-                            anchors.rightMargin: Theme.spacingXS
-                            anchors.verticalCenter: parent.verticalCenter
-                            color: clearSearchMouse.containsMouse ? Theme.surfaceContainerHighest : "transparent"
-
-                            DankIcon {
-                                anchors.centerIn: parent
-                                name: "close"
-                                size: Theme.iconSizeSmall
-                                color: Theme.surfaceVariantText
-                            }
-
-                            MouseArea {
-                                id: clearSearchMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    searchInput.text = "";
-                                    sharedSearchQuery.set("");
-                                    searchInput.forceActiveFocus();
-                                }
+                        onAccepted: {
+                            if (root.firstMatchingAgent) {
+                                searchInput.focus = false;
+                                if (popout.parentPopout)
+                                    root.fleetPopout = popout.parentPopout;
+                                root.focusAgent(root.firstMatchingAgent);
                             }
                         }
                     }
@@ -906,7 +828,7 @@ PluginComponent {
                     // Quick toggle for Herdr Desktop App (hc)
                     StyledRect {
                         id: hcChip
-                        height: searchBarRect.height
+                        height: searchInput.height
                         width: hcRow.implicitWidth + Theme.spacingS * 2
                         radius: Theme.cornerRadiusFull
                         color: root.includeHerdrCore ? Theme.withAlpha(Theme.primary, 0.22) : Theme.surfaceContainer
@@ -943,8 +865,8 @@ PluginComponent {
                     // Refresh button
                     StyledRect {
                         id: refreshBtn
-                        width: searchBarRect.height
-                        height: searchBarRect.height
+                        width: searchInput.height
+                        height: searchInput.height
                         radius: Theme.cornerRadiusFull
                         color: refreshMouse.containsMouse ? Theme.surfaceContainerHighest : Theme.surfaceContainer
 

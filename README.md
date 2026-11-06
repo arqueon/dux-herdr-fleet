@@ -8,7 +8,7 @@ Multi-machine & workspace agent monitor for [DankMaterialShell](https://danklinu
 
 ## Features
 
-- **Multi-Machine & Space Tree**: Automatically discovers your local `herdr` instance and all enabled SSH machines from `herdr machine list`, fetching `herdr [--machine <host>] api snapshot` in parallel via `collect-fleet` and deduplicating canonical machine, workspace, and agent pane entries (excluding auxiliary split shells and avoiding cross-pane tab title bleed on multi-agent split tabs). Background polling checks local state every 15s (min 10s), while remote SSH machines are polled when the popout is open or on explicit refresh.
+- **Multi-Machine & Space Tree**: Automatically discovers your local `herdr` instance and all enabled SSH machines from `herdr machine list`, fetching `herdr [--machine <host>] api snapshot` in parallel via `collect-fleet` and deduplicating canonical machine, workspace, and agent pane entries (excluding auxiliary split shells and avoiding cross-pane tab title bleed on multi-agent split tabs). Local state is polled every 15s (min 10s). Remote SSH machines are polled while the popout is open, on explicit refresh, and in the background every 60s by default (*Background remote refresh* setting; 0 = only while the popout is open), so the bar notices a blocked agent on another machine.
 - **Interactive Status Filter Pills & Live Search**: Click the top `blocked`, `working`, `idle`, or `done` summary pills to filter the fleet by status (click again to reset), and use the live multi-token search bar to filter across agent names, titles, pane IDs, workspaces, machines, and working directories (`Enter` focuses the first match).
 - **Herdr Desktop App (`hc`) Multi-Machine & Space Support**: Built-in setting and one-click `hc` chip in the popout header to monitor `herdr-core` / `herdr-app` across local and remote `hc` machines (`herdr-app ls`, `~/.local/state/herdr-core/default`, `hc get <addr> --json`, and `hc ls --json`), filtering out companion shells in spaces that already have an active agent.
 - **Rich Agent Cards**: Displays agent provider (`claude`, `codex`, `agy`, `hermes`, `pi`, etc.), pane ID, stripped terminal title / task label, working directory, context token usage (`⛁ 68% (325k)`), rate-limit status (`5h 100%`), and live state (`blocked`, `working`, `idle`, `done`).
@@ -46,10 +46,23 @@ listen_on unix:${XDG_RUNTIME_DIR}/kitty-{kitty_pid}.sock
 ```
 
 The socket lives in your private runtime directory. The **Cross-machine switching** setting
-chooses the method: *Automatic* (kitty, otherwise a guarded virtual-keyboard fallback),
-*Kitty only*, *Virtual keyboard only*, or *Off*. With *Off*, or when switching cannot be
-verified, the pane is still focused on its server and a notification tells you which machine
-to select in herdr. Same-machine focus does not need kitty.
+chooses the method:
+
+- *Kitty remote control* (default): keys go only to the herdr window, checked on its screen.
+- *Kitty, else Wayland virtual keyboard* and *Wayland virtual keyboard only* (opt-in): for
+  other terminals. These type the picker keys through a `zwp_virtual_keyboard_v1` client into
+  the **focused window**, only after Niri confirms the herdr window holds keyboard focus, and
+  they stop without Enter or Escape if the picker cannot be confirmed. It is still a
+  heuristic, so it is off unless you choose it.
+- *Off*: never sends keys.
+
+With *Off*, or when switching cannot be verified, the pane is still focused on its server and
+a notification (`dms notify`) tells you which machine to select in herdr. Same-machine focus
+does not need kitty.
+
+**Clickable notifications** (setting, on by default): herdr's own notifications are replaced
+by a copy posted with `dms notify` as "Dux Herdr Fleet", whose click jumps to the originating
+machine, workspace, tab and pane.
 
 ## Installation
 

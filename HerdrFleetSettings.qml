@@ -47,14 +47,14 @@ PluginSettings {
     SelectionSetting {
         settingKey: "endpointSwitchMode"
         label: I18n.trFor("duxHerdrFleet", "Cross-machine switching")
-        description: I18n.trFor("duxHerdrFleet", "herdr has no API to change the machine shown by its window, so switching drives its Navigator. Kitty remote control (listen_on) is verified on screen; the virtual keyboard is a guarded fallback. Off only focuses the pane on its server and notifies you.")
+        description: I18n.trFor("duxHerdrFleet", "herdr has no API to change the machine its window shows, so switching drives herdr's Go to picker. Kitty remote control (needs listen_on in kitty.conf) sends keys only to the herdr window and checks its screen before Enter. The virtual-keyboard options type into the focused window through a Wayland virtual keyboard and are opt-in. Off only focuses the pane on its server and notifies you.")
         options: [
-            { label: I18n.trFor("duxHerdrFleet", "Automatic (kitty, else virtual keyboard)"), value: "auto" },
-            { label: I18n.trFor("duxHerdrFleet", "Kitty remote control only"), value: "kitty" },
-            { label: I18n.trFor("duxHerdrFleet", "Virtual keyboard only"), value: "keyboard" },
+            { label: I18n.trFor("duxHerdrFleet", "Kitty remote control (recommended)"), value: "kitty" },
+            { label: I18n.trFor("duxHerdrFleet", "Kitty, else Wayland virtual keyboard"), value: "auto" },
+            { label: I18n.trFor("duxHerdrFleet", "Wayland virtual keyboard only"), value: "keyboard" },
             { label: I18n.trFor("duxHerdrFleet", "Off (focus on server + notification)"), value: "off" }
         ]
-        defaultValue: "auto"
+        defaultValue: "kitty"
     }
 
     ToggleSetting {
