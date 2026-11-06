@@ -643,17 +643,17 @@ PluginComponent {
                 id: hRow
                 spacing: Theme.spacingS
 
-                DankIcon {
+                DIcon {
                     name: "smart_toy"
                     color: root.barIconColor
-                    size: Theme.barIconSize(root.barThickness, -Theme.spacingXS)
+                    size: root.iconSize
                     anchors.verticalCenter: parent.verticalCenter
                 }
 
                 StyledText {
                     text: root.pillLabelText
                     color: (root.totals.blocked || 0) > 0 ? Theme.error : Theme.surfaceText
-                    font.pixelSize: Theme.barTextSize(root.barThickness)
+                    font.pixelSize: root.textSize
                     font.weight: (root.totals.blocked || 0) > 0 ? Font.Bold : Font.Normal
                     anchors.verticalCenter: parent.verticalCenter
                     visible: root.pillLabelText.length > 0
@@ -681,17 +681,17 @@ PluginComponent {
                 id: vCol
                 spacing: Theme.spacingXS
 
-                DankIcon {
+                DIcon {
                     name: "smart_toy"
                     color: root.barIconColor
-                    size: Theme.barIconSize(root.barThickness, -Theme.spacingXS)
+                    size: root.iconSize
                     anchors.horizontalCenter: parent.horizontalCenter
                 }
 
                 StyledText {
                     text: (root.totals.agents || 0).toString()
                     color: (root.totals.blocked || 0) > 0 ? Theme.error : Theme.surfaceText
-                    font.pixelSize: Theme.barTextSize(root.barThickness)
+                    font.pixelSize: root.textSize
                     anchors.horizontalCenter: parent.horizontalCenter
                     visible: root.pillDisplayMode !== "iconOnly" && (root.totals.agents || 0) > 0
                 }
@@ -769,7 +769,7 @@ PluginComponent {
                                 anchors.centerIn: parent
                                 spacing: Theme.spacingXXS
 
-                                DankIcon {
+                                DIcon {
                                     name: root.statusIcon(statusPill.modelData)
                                     color: statusPill.accentColor
                                     size: Theme.iconSizeSmall
@@ -840,7 +840,7 @@ PluginComponent {
                             anchors.centerIn: parent
                             spacing: Theme.spacingXS
 
-                            DankIcon {
+                            DIcon {
                                 name: "desktop_windows"
                                 size: Theme.iconSizeSmall
                                 color: root.includeHerdrCore ? Theme.primary : Theme.surfaceVariantText
@@ -870,7 +870,7 @@ PluginComponent {
                         radius: Theme.cornerRadiusFull
                         color: refreshMouse.containsMouse ? Theme.surfaceContainerHighest : Theme.surfaceContainer
 
-                        DankIcon {
+                        DIcon {
                             anchors.centerIn: parent
                             name: sharedRefreshing.value ? "sync" : "refresh"
                             size: Theme.iconSizeSmall
@@ -1022,7 +1022,7 @@ PluginComponent {
                                         anchors.margins: Theme.spacingS
                                         spacing: Theme.spacingXS
 
-                                        DankIcon {
+                                        DIcon {
                                             name: root.machineIcon(machineBlock.modelData)
                                             size: Theme.iconSizeSmall
                                             color: machineBlock.modelData.reachable ? Theme.primary : Theme.error
@@ -1082,7 +1082,7 @@ PluginComponent {
                                                 anchors.rightMargin: Theme.spacingS
                                                 spacing: Theme.spacingXS
 
-                                                DankIcon {
+                                                DIcon {
                                                     id: wsFolderIcon
                                                     name: wsBlock.modelData.focused ? "folder_open" : "folder"
                                                     size: Theme.iconSizeSmall
@@ -1146,7 +1146,7 @@ PluginComponent {
                                                     anchors.margins: Theme.spacingS
                                                     spacing: Theme.spacingS
 
-                                                    DankIcon {
+                                                    DIcon {
                                                         id: statusIconItem
                                                         name: root.statusIcon(agentCard.modelData.agent_status)
                                                         color: root.statusColor(agentCard.modelData.agent_status)
