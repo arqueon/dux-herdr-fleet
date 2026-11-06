@@ -475,27 +475,21 @@ def abort(code=1):
     raise SystemExit(code)
 
 
+# Send ONE chord only (see the kitty path): a second chord could close an overlay the
+# output heuristic missed and type into the agent's pane.
 opened_navigator = False
-for dc in direct_chords:
-    if not keyboard_target_ok():
-        abort()
-    w_before = total_client_wchar()
-    send_chord(dc)
-    if wait_wchar_delta(w_before, open_threshold, OPEN_WINDOW_S):
-        opened_navigator = True
-        break
-
-if not opened_navigator and prefix_suffixes:
-    for suf in prefix_suffixes:
-        if not keyboard_target_ok():
-            abort()
-        w_before = total_client_wchar()
-        send_chord(prefix_chord)
-        time.sleep(0.03)
-        send_chord(suf)
-        if wait_wchar_delta(w_before, open_threshold, OPEN_WINDOW_S):
-            opened_navigator = True
-            break
+if not keyboard_target_ok():
+    abort()
+w_before = total_client_wchar()
+if direct_chords:
+    send_chord(direct_chords[0])
+elif prefix_suffixes:
+    send_chord(prefix_chord)
+    time.sleep(0.03)
+    send_chord(prefix_suffixes[0])
+else:
+    abort()
+opened_navigator = wait_wchar_delta(w_before, open_threshold, OPEN_WINDOW_S)
 
 # Never press Escape on failure: if the overlay did not open, ESC would reach the agent's PTY.
 if not opened_navigator:
@@ -563,7 +557,9 @@ import sys
 import time
 
 NAV_TITLE = "─ Go to ─"
-NAV_HINT = "search type · move"
+# Shown in the search field while it is empty, i.e. right after the overlay opens
+# (the bottom key-hint line differs between browse and search mode, so not used here).
+NAV_PLACEHOLDER = "search agents and terminals"
 
 target_endpoint = (sys.argv[1] or "").strip().lower()
 client_pids = [p for p in (sys.argv[2] or "").split() if p.isdigit()]
@@ -631,7 +627,12 @@ def screen(ansi=False):
 
 
 def nav_marks(lines):
-    return sum(1 for l in lines if NAV_TITLE in l) + sum(1 for l in lines if NAV_HINT in l)
+    return sum(1 for l in lines if NAV_TITLE in l) + sum(1 for l in lines if NAV_PLACEHOLDER in l)
+
+
+def overlay_visible(lines):
+    """The overlay frame title is on screen beyond what was there before (any mode)."""
+    return sum(1 for l in lines if NAV_TITLE in l) > base_title
 
 
 def wait_for(pred, timeout_s, ansi=False):
@@ -647,7 +648,7 @@ def wait_for(pred, timeout_s, ansi=False):
 def close_overlay():
     for _ in range(3):
         cur = screen()
-        if cur is None or nav_marks(cur) <= base_marks:
+        if cur is None or not overlay_visible(cur):
             return
         kit("send-key", *match, "escape")
         time.sleep(0.3)
@@ -658,6 +659,7 @@ if before is None:
     finish(3, "kitten get-text failed")
 # Agent output may already contain the overlay's words; only count what appears new.
 base_marks = nav_marks(before)
+base_title = sum(1 for l in before if NAV_TITLE in l)
 
 
 def load_goto_chords():
@@ -679,16 +681,19 @@ def load_goto_chords():
     return seqs
 
 
-# 1. Open the Go to overlay.
-opened = None
-for seq in load_goto_chords():
-    kit("send-key", *match, *seq)
-    opened = wait_for(lambda cur: nav_marks(cur) >= base_marks + 2, 0.8)
-    if opened:
-        log(f"overlay open via {'+'.join(seq)}")
-        break
+# 1. Open the Go to overlay with ONE chord only. Never try a second chord: if the first
+#    one opened the overlay but the check missed it, a second chord (e.g. prefix, then
+#    "g") would close it and type into the agent's pane.
+seq = load_goto_chords()[0]
+kit("send-key", *match, *seq)
+opened = wait_for(lambda cur: nav_marks(cur) >= base_marks + 2, 1.2)
 if not opened:
-    finish(1, "overlay did not open; nothing else sent")
+    cur = screen()
+    if cur is not None and overlay_visible(cur):
+        close_overlay()
+        finish(1, f"overlay opened via {'+'.join(seq)} but not in its expected state; closed it")
+    finish(1, f"overlay did not open via {'+'.join(seq)}; nothing else sent")
+log(f"overlay open via {'+'.join(seq)}")
 
 # 2. Search for the machine label and require it in the search field.
 search_re = re.compile(r"│\s*/\s*" + re.escape(query_text) + r"\s")
