@@ -15,6 +15,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HERDR_SWITCHED_ENDPOINT=0
 HERDR_SWITCH_CONFIRMED=0
 HERDR_SWITCH_FAILED=0
+FOCUS_LOG="${XDG_STATE_HOME:-$HOME/.local/state}/dux-herdr-fleet/focus.log"
+mkdir -p "$(dirname "$FOCUS_LOG")" 2>/dev/null || FOCUS_LOG=/dev/null
+# Keep the log small: last ~400 lines.
+if [[ -f "$FOCUS_LOG" ]] && (( $(wc -l < "$FOCUS_LOG") > 600 )); then
+    tail -n 400 "$FOCUS_LOG" > "$FOCUS_LOG.tmp" 2>/dev/null && mv "$FOCUS_LOG.tmp" "$FOCUS_LOG"
+fi
+flog() { printf '%s %s\n' "$(date '+%F %T.%3N')" "$*" >> "$FOCUS_LOG" 2>/dev/null || true; }
+flog "focus-target $*"
 kind="${1:-window}"
 backend="${2:-herdr}"
 machine="${3:-local}"
@@ -148,7 +156,7 @@ switch_via_virtual_keyboard() {
     local win_id="${3:-}"
     [[ -n "$target_endpoint" && -n "$win_id" ]] || return 1
 
-    python3 - "$target_endpoint" "$client_pids" "$win_id" <<'PY' >/dev/null 2>&1
+    python3 - "$target_endpoint" "$client_pids" "$win_id" <<'PY' >/dev/null 2>>"$FOCUS_LOG"
 import ctypes
 import json
 import os
@@ -529,10 +537,16 @@ PY
 }
 
 # Preferred path: kitty remote control. Keys go only to the kitty window that runs the
-# herdr client (never to whatever app has compositor focus), and every step is verified
-# by reading that window's screen with `kitten @ get-text`. Needs `allow_remote_control`
-# and `listen_on` in kitty.conf; the socket is discovered from the client's environment.
-# Exit codes: 0 = confirmed, 2 = keys sent but not confirmed, 1 = aborted, 3 = unavailable.
+# herdr client (never to whatever app has compositor focus), and each step is checked on
+# that window's screen (`kitten @ get-text`) before the next one:
+#   1. the Go to overlay is open (its frame title and its key-hint line appeared);
+#   2. the search field shows the typed machine label;
+#   3. the highlighted row is that machine's header row, and only then Enter.
+# If a check fails after the overlay opened, it is closed with Escape, re-checking before
+# each Escape that the overlay is still there, so no Escape ever reaches an agent.
+# Needs `allow_remote_control` and `listen_on` in kitty.conf; the socket is discovered
+# from the herdr client's environment (KITTY_LISTEN_ON / KITTY_WINDOW_ID).
+# Exit codes: 0 = confirmed, 2 = sent but not confirmed, 1 = aborted, 3 = unavailable.
 switch_via_kitty() {
     local target_endpoint="${1:-}"
     local client_pids="${2:-}"
@@ -540,7 +554,7 @@ switch_via_kitty() {
     [[ -n "$target_endpoint" ]] || return 1
     command -v kitten >/dev/null 2>&1 || return 3
 
-    python3 - "$target_endpoint" "$client_pids" "$win_id" <<'PY' >/dev/null 2>&1
+    python3 - "$target_endpoint" "$client_pids" "$win_id" <<'PY' >/dev/null 2>>"$FOCUS_LOG"
 import json
 import os
 import re
@@ -548,12 +562,27 @@ import subprocess
 import sys
 import time
 
+NAV_TITLE = "─ Go to ─"
+NAV_HINT = "search type · move"
+
 target_endpoint = (sys.argv[1] or "").strip().lower()
 client_pids = [p for p in (sys.argv[2] or "").split() if p.isdigit()]
 win_id = (sys.argv[3] or "").strip()
 query_text = re.sub(r"[^a-z0-9]+", " ", target_endpoint).strip()
+
+
+def log(msg):
+    sys.stderr.write(f"  kitty: {msg}\n")
+    sys.stderr.flush()
+
+
+def finish(code, msg):
+    log(f"{msg} (exit {code})")
+    raise SystemExit(code)
+
+
 if not query_text:
-    raise SystemExit(1)
+    finish(1, "empty target")
 
 win_pid = ""
 if win_id:
@@ -585,7 +614,8 @@ for pid in client_pids:
     listen_on, kitty_window = env["KITTY_LISTEN_ON"], env["KITTY_WINDOW_ID"]
     break
 if not listen_on:
-    raise SystemExit(3)
+    finish(3, "no herdr client with KITTY_LISTEN_ON (kitty listen_on not configured or old window)")
+log(f"socket {listen_on} window {kitty_window}")
 
 base = ["kitten", "@", "--to", listen_on]
 match = ["--match", f"id:{kitty_window}"]
@@ -595,42 +625,39 @@ def kit(*args, timeout=1.5):
     return subprocess.run(base + list(args), capture_output=True, text=True, timeout=timeout, check=False)
 
 
-def screen():
-    res = kit("get-text", *match)
+def screen(ansi=False):
+    res = kit("get-text", *match, *(["--ansi"] if ansi else []))
     return res.stdout.splitlines() if res.returncode == 0 else None
 
 
-def changed_lines(a, b):
-    n = max(len(a), len(b))
-    a = a + [""] * (n - len(a))
-    b = b + [""] * (n - len(b))
-    return sum(1 for x, y in zip(a, b) if x != y)
+def nav_marks(lines):
+    return sum(1 for l in lines if NAV_TITLE in l) + sum(1 for l in lines if NAV_HINT in l)
 
 
-def wait_for(pred, timeout_s):
+def wait_for(pred, timeout_s, ansi=False):
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
-        cur = screen()
+        cur = screen(ansi)
         if cur is not None and pred(cur):
             return cur
         time.sleep(0.04)
     return None
 
 
+def close_overlay():
+    for _ in range(3):
+        cur = screen()
+        if cur is None or nav_marks(cur) <= base_marks:
+            return
+        kit("send-key", *match, "escape")
+        time.sleep(0.3)
+
+
 before = screen()
 if before is None:
-    raise SystemExit(3)
-
-# A streaming agent also changes screen rows, which would look like the overlay opening.
-# Only proceed from a quiet screen so a change can be attributed to the Navigator.
-time.sleep(0.15)
-again = screen()
-if again is None or changed_lines(before, again) > 0:
-    raise SystemExit(1)
-
-# Text that only the Navigator overlay shows (set after calibration). When present it is
-# required in addition to the row-change heuristic.
-navigator_marker = os.environ.get("DUX_HERDR_NAVIGATOR_MARKER", "").strip().lower()
+    finish(3, "kitten get-text failed")
+# Agent output may already contain the overlay's words; only count what appears new.
+base_marks = nav_marks(before)
 
 
 def load_goto_chords():
@@ -652,30 +679,63 @@ def load_goto_chords():
     return seqs
 
 
-# 1. Open the Navigator: it is an overlay, so several screen rows must change.
+# 1. Open the Go to overlay.
 opened = None
 for seq in load_goto_chords():
     kit("send-key", *match, *seq)
-    opened = wait_for(
-        lambda cur: changed_lines(before, cur) >= 3
-        and (not navigator_marker or any(navigator_marker in line.lower() for line in cur)),
-        0.8,
-    )
+    opened = wait_for(lambda cur: nav_marks(cur) >= base_marks + 2, 0.8)
     if opened:
+        log(f"overlay open via {'+'.join(seq)}")
         break
 if not opened:
-    raise SystemExit(1)  # nothing typed; never send Escape (it would reach the agent)
+    finish(1, "overlay did not open; nothing else sent")
 
-# 2. Search for the endpoint and require the query to show up on screen.
-had_query = sum(1 for line in opened if query_text in line.lower())
+# 2. Search for the machine label and require it in the search field.
+search_re = re.compile(r"│\s*/\s*" + re.escape(query_text) + r"\s")
+base_search = sum(1 for l in before if search_re.search(l.lower() + " "))
 kit("send-text", *match, "/" + query_text)
-typed = wait_for(lambda cur: sum(1 for line in cur if query_text in line.lower()) > had_query, 0.8)
-if not typed:
-    raise SystemExit(2)
+if not wait_for(lambda cur: sum(1 for l in cur if search_re.search(l.lower() + " ")) > base_search, 0.8):
+    close_overlay()
+    finish(1, "search text not shown; overlay closed")
 
-# 3. Clamp to the first row (the endpoint row) and confirm.
+# 3. Move to the top (machine header rows come first) and verify the highlighted row.
 kit("send-key", *match, "up", "up", "up", "up")
-time.sleep(0.05)
+time.sleep(0.12)
+
+
+def highlighted_row(lines):
+    """Text of the overlay row painted with the frame's accent color as background."""
+    accent = None
+    for idx, l in enumerate(lines):
+        m = re.search(r"\x1b\[([0-9;:]*)m┌─ Go to", l)
+        # Skip a frame title that was already on screen before the overlay opened.
+        if m and not (idx < len(before) and "┌─ Go to" in before[idx]):
+            c = re.search(r"38[:;]2[:;](\d+)[:;](\d+)[:;](\d+)", m.group(1))
+            if c:
+                accent = c.groups()
+            break
+    if not accent:
+        return None
+    bg = re.compile(r"\x1b\[[0-9;:]*48[:;]2[:;]" + "[:;]".join(accent) + r"[0-9;:]*m([^\x1b]*)")
+    for l in lines:
+        m = bg.search(l)
+        if m and m.group(1).strip():
+            return m.group(1).strip()
+    return None
+
+
+row = None
+for _ in range(5):
+    cur = screen(ansi=True)
+    row = highlighted_row(cur or [])
+    if row:
+        break
+    time.sleep(0.06)
+log(f"highlighted row: {row!r}")
+if not row or row.lower() != target_endpoint:
+    close_overlay()
+    finish(1, f"highlighted row is not '{target_endpoint}'; overlay closed")
+
 kit("send-key", *match, "enter")
 
 
@@ -698,9 +758,9 @@ def selected_endpoint_label():
 deadline = time.monotonic() + 2.5
 while time.monotonic() < deadline:
     if selected_endpoint_label() == target_endpoint:
-        raise SystemExit(0)
+        finish(0, "endpoint selection confirmed")
     time.sleep(0.05)
-raise SystemExit(2)
+finish(2, f"Enter sent but selection is still '{selected_endpoint_label()}'")
 PY
 }
 
@@ -708,16 +768,21 @@ PY
 # kitty = kitty only; keyboard = virtual keyboard only; off = never inject keys.
 switch_herdr_tui_endpoint() {
     local mode="${DUX_HERDR_ENDPOINT_SWITCH:-auto}" rc
+    flog "switch to '$1' mode=$mode"
     case "$mode" in
-        off) return 1 ;;
-        keyboard) switch_via_virtual_keyboard "$@"; return $? ;;
+        off) flog "switch disabled"; return 1 ;;
+        keyboard)
+            switch_via_virtual_keyboard "$@"; rc=$?
+            flog "virtual keyboard exit $rc"; return "$rc" ;;
     esac
     switch_via_kitty "$@"
     rc=$?
+    flog "kitty exit $rc"
     if [[ "$rc" == "3" ]]; then
         [[ "$mode" == "kitty" ]] && return 1
         switch_via_virtual_keyboard "$@"
-        return $?
+        rc=$?
+        flog "virtual keyboard exit $rc"
     fi
     return "$rc"
 }
@@ -823,12 +888,13 @@ focus_niri_herdr_window() {
                 fi
             fi
 
+            flog "window $win_id '$win_title' focused_ok=$focused_ok win_host='$win_host' selected='$(current_herdr_tui_endpoint)' target='$desired_endpoint' needs_switch=$needs_switch"
             if [[ "$needs_switch" == "1" ]]; then
-                local switch_rc=1
-                if [[ "$focused_ok" == "1" ]]; then
-                    switch_herdr_tui_endpoint "$desired_endpoint" "$client_pids" "$win_id"
-                    switch_rc=$?
-                fi
+                # The kitty path targets the window directly and the virtual-keyboard path
+                # re-verifies keyboard focus itself, so both are safe to call from here.
+                local switch_rc
+                switch_herdr_tui_endpoint "$desired_endpoint" "$client_pids" "$win_id"
+                switch_rc=$?
                 case "$switch_rc" in
                     0) HERDR_SWITCHED_ENDPOINT=1; HERDR_SWITCH_CONFIRMED=1 ;;
                     2) HERDR_SWITCHED_ENDPOINT=1 ;;
@@ -1166,6 +1232,7 @@ if [[ "$HERDR_SWITCHED_ENDPOINT" == "1" ]]; then
     sleep 0.15
 fi
 focus_herdr_target_on_server
+flog "done kind=$kind machine=$machine target=$target_id switched=$HERDR_SWITCHED_ENDPOINT confirmed=$HERDR_SWITCH_CONFIRMED failed=$HERDR_SWITCH_FAILED"
 if [[ "$HERDR_SWITCH_FAILED" == "1" ]] && command -v notify-send >/dev/null 2>&1; then
     # Server-side focus was applied; the client just needs the user to pick the machine.
     notify-send --app-name="Dux Herdr Fleet" --icon=utilities-terminal --expire-time=6000 \
