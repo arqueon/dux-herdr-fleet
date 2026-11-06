@@ -708,24 +708,69 @@ kit("send-key", *match, "up", "up", "up", "up")
 time.sleep(0.12)
 
 
+def sgr_cells(raw):
+    """Plain characters of an ANSI line with the background RGB active for each one."""
+    cells, bg, i = [], None, 0
+    while i < len(raw):
+        if raw.startswith("\x1b[", i):
+            j = i + 2
+            while j < len(raw) and not ("@" <= raw[j] <= "~"):
+                j += 1
+            if j < len(raw) and raw[j] == "m":
+                params = raw[i + 2:j].split(";") if raw[i + 2:j] else ["0"]
+                k = 0
+                while k < len(params):
+                    p = params[k]
+                    if p in ("", "0", "49"):
+                        bg = None
+                    elif p.startswith("48:2:"):
+                        bg = tuple(x for x in p.split(":")[2:] if x != "")[-3:]
+                    elif p == "48" and k + 4 < len(params) and params[k + 1] == "2":
+                        bg = tuple(params[k + 2:k + 5])
+                        k += 4
+                    elif p.startswith("48") or (p.isdigit() and (40 <= int(p) <= 47 or 100 <= int(p) <= 107)):
+                        bg = ("other",)
+                    elif p in ("38", "58") and k + 1 < len(params) and params[k + 1] == "2":
+                        k += 4
+                    elif p in ("38", "58") and k + 1 < len(params) and params[k + 1] == "5":
+                        k += 2
+                    k += 1
+            i = j + 1
+            continue
+        cells.append((raw[i], bg))
+        i += 1
+    return cells
+
+
 def highlighted_row(lines):
-    """Text of the overlay row painted with the frame's accent color as background."""
-    accent = None
+    """Text of the overlay row painted with the frame's accent color as background.
+
+    Only rows inside the Go to frame (below its title, between its left and right
+    borders) are considered: herdr paints the active tab and the sidebar selection with
+    the same accent, outside the overlay."""
+    top = accent = None
     for idx, l in enumerate(lines):
         m = re.search(r"\x1b\[([0-9;:]*)m┌─ Go to", l)
-        # Skip a frame title that was already on screen before the overlay opened.
         if m and not (idx < len(before) and "┌─ Go to" in before[idx]):
             c = re.search(r"38[:;]2[:;](\d+)[:;](\d+)[:;](\d+)", m.group(1))
             if c:
-                accent = c.groups()
+                top, accent = idx, c.groups()
             break
-    if not accent:
+    if top is None:
         return None
-    bg = re.compile(r"\x1b\[[0-9;:]*48[:;]2[:;]" + "[:;]".join(accent) + r"[0-9;:]*m([^\x1b]*)")
-    for l in lines:
-        m = bg.search(l)
-        if m and m.group(1).strip():
-            return m.group(1).strip()
+    title = "".join(ch for ch, _ in sgr_cells(lines[top]))
+    left = title.find("┌─ Go to")
+    right = title.find("┐", left)
+    right = right if right > left else len(title)
+    for l in lines[top + 1:]:
+        cells = sgr_cells(l)
+        plain = "".join(ch for ch, _ in cells)
+        if len(plain) > left and plain[left] == "└":
+            break
+        text = "".join(ch for ch, bg in cells[left + 1:right] if bg == accent).strip()
+        if text:
+            # Machine rows end with a connection-state glyph after wide padding.
+            return re.split(r"\s{2,}", text)[0].strip()
     return None
 
 
